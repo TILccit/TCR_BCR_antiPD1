@@ -1,0 +1,1419 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center> Processing the anti-PD(L)1 public datasets-- samples, count data, deconvolution</center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 16 Sept 2022. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 4
+    number_sections: true
+    #df_print: paged
+
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1', progress=FALSE)
+unlink("scripts/main/B_01_aPD1_data_count_deconvolution_processing_cache", recursive = TRUE)
+```
+
+
+```{r,warning=F, message=F}
+## Clear R-workspace
+rm(list=ls(all=TRUE))
+
+## Close all graphic devices
+graphics.off()
+#####################
+### Load packages ###
+#####################
+library(pacman)
+
+pacman::p_load(extrafont,DT,dplyr,DESeq2,tximport,readr,stringr,plyr,tibble,parallel,e1071,preprocessCore,tidyverse,ggplot2,ComplexHeatmap, data.table, ggthemes, dichromat, scales, circlize, cluster, RColorBrewer, randomcoloR, splitstackshape, estimate,tidyverse, ggstatsplot,hrbrthemes,ggpubr)
+
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsMainPath<- paste0(scriptsPath, "main/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+antiPDL1publicInputData <- paste0(projectDataPath,"antiPD(L)1_public/")
+otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+# Output
+projectOutDataPath <- paste0("output/data_files/")
+# tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+antiPDL1publicIntermediateData <- paste0(projectOutDataPath,"antiPD(L)1_public/")
+# Kallisto paths
+my_kallisto_path.suffix <- "rna/processed/kallisto"
+# Tools path
+cibersortPath <-paste0("tools/cibersort/")
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+
+######################################
+## Create intermediate output paths ##
+######################################
+if (!dir.exists(antiPDL1publicIntermediateData)) {dir.create(antiPDL1publicIntermediateData)}
+
+if (!dir.exists(paste0(antiPDL1publicIntermediateData,"purity/"))) {dir.create(paste0(antiPDL1publicIntermediateData,"purity/"))}
+
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"aPD1_data_count_deconvolution_processing_functions.R"))
+
+##########################
+### FOLDER/FILES NAMES ###
+##########################
+# Create list with folders names for the different datasets.
+datasets <- c("Hugo","Riaz","Gide","Liu","Rod","Miao","Immotion150","Kim","Mari", "Powles","Braun")
+data.foldersList <- as.list(c("Hugo_MEL","Riaz_MEL","Gide_MEL", "Liu_MEL","Rodriguez_MEL","Miao_RCC","Immo150_RCC","Kim_GAS","Mari_BLA","Powles_BLA","Braun_RCC"))
+names(data.foldersList)<- c("Hugo","Riaz","Gide", "Liu","Rod", "Miao","Immotion150","Kim","Mari","Powles","Braun")
+
+############################
+## Project Data Filenames ##
+############################
+tpm.RData <- "RNASeqClin_TPM.RData"
+vst.batch.dataset.RData <- "RNASeqClin_VSTbatchDataset.RData"
+
+raw.expr.RData <- "RNASeqClin_vst_RAW.RData"
+fpkm.uq.RData <- "RNASeqClin_FPKM.UQ.RData"
+vst.RData <- "RNASeqClin_VST.RData"
+vst.batch.tissue.RData <- "RNASeqClin_VSTbatchTissue.RData"
+
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+```
+
+
+# Data/Tools loading {.tabset .tabset-fade .tabset-pills}
+
+
+Throughout the analysis, eight public bulk RNA-Seq datasets where used.
+
+1. [Hugo et al.](https://www.ncbi.nlm.nih.gov/pubmed/26997480): melanoma
+2. [Riaz et al.](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5685550/): melanoma
+3. [Gide et al.](https://www.ncbi.nlm.nih.gov/pubmed/30753825): melanoma
+4. [Liu et al.](https://www.nature.com/articles/s41591-019-0654-5): melanoma
+5. [Rodriguez et al.](https://www.nature.com/articles/s43018-019-0003-0):melanoma
+6. [Miao et al.](https://www.ncbi.nlm.nih.gov/pubmed/29301960): RCC
+7. [McDermott et al., Immotion150 Trial](https://www.nature.com/articles/s41591-018-0053-3): RCC
+8. [Kim et al.](https://www.ncbi.nlm.nih.gov/pubmed/30013197): gastric
+9. [Mariathasan et al.](https://www.ncbi.nlm.nih.gov/pubmed/29443960): bladder
+10. [Powles et al.](https://www.nature.com/articles/s41591-019-0628-7): bladder
+
+In all those datasets, samples where selected as follows:
+
+A. only pre-treatment samples
+
+B. RECIST criteria: Complete response(CR), partial response(PR), progressive disease(PD), stable disease (SD), not evaluable (NE). 
+
+C. Merging patients with CR and PR as one group.
+
+## Reference data
+
+```{r,warning=F, message=F}
+transct_to_gene <- read.table(paste0(referenceInputData,"tx2gene_Hg38_id_symb.txt"), header = TRUE, sep = "\t" )
+tx2gene <- transct_to_gene[,c("TXNAME","GENESYMB")]
+# Gene ids to symbols
+geneid2symb <- read.table(file.path(paste0(referenceInputData, "genID2name.csv")), header = TRUE, sep = ",")
+geneid2symb$gene_id <- as.character(geneid2symb$gene_id)
+geneid2symb$gene_name <- as.character(geneid2symb$gene_name)
+
+## Load exonic gene sizes that assist with FPKM normalization process
+load(paste0(referenceInputData,"exonic.gene.sizes.RData"))
+exonic.gene.sizes2$gene_name <- geneid2symb$gene_name[match(exonic.gene.sizes2$gene,geneid2symb$gene_id)]
+```
+
+## Cibersort
+```{r,warning=F, message=F}
+# source sibersort script/functions
+source(paste0(cibersortPath,'CIBERSORT.R'))
+# Cibersort human signature matrix
+LM22_signatureFileName <- "LM22_updatedannotation_noNA.txt"
+# Load signature
+LM22_signMatrix <- as.data.frame(read_tsv(paste0(cibersortPath,LM22_signatureFileName), col_names=TRUE))
+```
+
+
+# Analysis
+
+Using Cibersort to infer immune infiltration estimates. 
+
+Signature Matrix: LM22
+Input mixture matrix: TPM normalized, as CIBERSORT developers have mainly used TPM for the analysis as reported in the paper.
+
+# Load data and extract mixture matrices
+
+```{r ,warning=F, message=F,fig.show = 'hold', fig.width=18, fig.height=10, eval=TRUE}
+if (file.exists(paste0(antiPDL1publicIntermediateData,"samples.aPD1.f.tpm.dataset","_ALLresp", Rdata.suffix))){
+  load(paste0(antiPDL1publicIntermediateData,"samples.aPD1.f.tpm.dataset","_ALLresp", Rdata.suffix))
+
+}else{
+  
+  ##############
+  ## MELANOMA ##
+  ##############
+  
+  ########################
+  ###### LOAD HUGO #######
+  ########################
+  
+  ### Import sample info of Hugo dataset
+  samples_Hugo <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Hugo"]],"/metadata/", "hugo_clinical_RNA.csv")), header = TRUE, sep = ",")
+  
+  samples_Hugo <- samples_Hugo %>% dplyr::filter(response %in% c("CR","PR","PD","SD"))
+  samples_Hugo$response <- as.factor(samples_Hugo$response)
+  levels(samples_Hugo$response)<-c("CR+PR","PD","CR+PR")
+  print("Hugo")
+  table(samples_Hugo$response)
+  samples_Hugo$tissue<- "melanoma"
+  samples_Hugo$dataset<- "Hugo"
+  samples_Hugo <- samples_Hugo %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  # CR+PR    PD
+  # 15    13
+  #########################
+  ## Run DESeq2 pipeline ##
+  #########################
+  files_h <- file.path(antiPDL1publicInputData,data.foldersList[["Hugo"]],"/",my_kallisto_path.suffix, samples_Hugo$run_accession, "abundance.tsv")
+  names(files_h) <- samples_Hugo$run_accession
+ 
+  all(file.exists(files_h))
+  ########################
+  ###### LOAD RIAZ #######
+  ########################
+  ### Import sample info of Riaz dataset
+  samples_Riaz <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Riaz"]],"/metadata/", "riaz_clinical_RNA.csv")), header = TRUE, sep = ",")
+  samples_Riaz <- samples_Riaz %>% dplyr::filter(pre_on_treatment %in% c("pre")) %>% droplevels() %>% distinct()
+  samples_Riaz$response <- factor(samples_Riaz$response)
+  samples_Riaz <-as.data.frame(samples_Riaz)
+  # exclude stable disease samples
+  # samples <- subset(samples, samples$response != "SD")
+  # samples <- subset(samples, samples$response != "UNK")
+  ## Remove comple name from title of patient
+  
+  patient_nums <- as.character(apply(as.data.frame(samples_Riaz$title), 2, function(z) get_patient_num(z)))
+  samples_Riaz$title <- patient_nums
+  samples_Riaz$response <- factor(samples_Riaz$response)
+  levels(samples_Riaz$response)<-c("PD","CR+PR","SD","UNK")
+  print("Riaz")
+  table(samples_Riaz$response)
+  # PD PRCR
+  # 23   10
+  samples_Riaz$tissue<- "melanoma"
+  samples_Riaz$dataset<- "Riaz"
+  samples_Riaz <- samples_Riaz %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  #########################
+  ## Run DESeq2 pipeline ##
+  #########################
+ files_r <- file.path(antiPDL1publicInputData,data.foldersList[["Riaz"]],"/",my_kallisto_path.suffix, samples_Riaz$run_accession, "abundance.tsv")
+  names(files_r) <- samples_Riaz$run_accession
+  all(file.exists(files_r))
+  ########################
+  ###### LOAD GIDE #######
+  ########################
+  ### Import sample info of Riaz dataset
+  samples_Gide <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Gide"]],"/metadata/",  "gide_clinical_RNA.PD1_ALL.csv")), header = TRUE, sep = ",")
+  # Fix issue with SD cells -empty space
+  samples_Gide <- samples_Gide %>% dplyr::filter(pre_on_treatment=="pre") %>% droplevels() %>% distinct()
+  samples_Gide$response <- as.factor(str_replace(samples_Gide$response," ",""))
+  # Subset samples to CR, PR, PD
+  samples_Gide <- samples_Gide %>% dplyr::filter(response %in% c("PR","CR","SD","PD")) %>% droplevels() %>% as.data.frame()
+  levels(samples_Gide$response)<-c("CR+PR", "PD", "CR+PR", "SD")
+  samples_Gide$tissue<- "melanoma"
+  samples_Gide$dataset<- "Gide"
+  a <- paste0(samples_Gide$run_accession)
+  ## Load kallisto quantification files
+  files_g <- file.path(antiPDL1publicInputData,data.foldersList[["Gide"]],"/",my_kallisto_path.suffix, samples_Gide$run_accession, "abundance.tsv")
+  names(files_g) <- paste0(a)
+  
+  # DELETE WHEN ALL PRODUCED
+  files_g <- subset(files_g, file.exists(files_g))
+  print("Gide")
+  table(samples_Gide$response)
+  
+  all(file.exists(files_g))
+  
+  samples_Gide <- samples_Gide %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  #######################
+  ###### LOAD LIU #######
+  #######################
+  ### Import sample info 
+  samples_Liu <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Liu"]],"/metadata/",  "liu_clinical_RNA_ALL.csv")), header = TRUE, sep = ",")
+  # Subset samples to CR, PR, PD
+  samples_Liu  <- samples_Liu %>% dplyr::filter(pre_on_treatment=="pre") %>% droplevels() %>% distinct()
+
+  # We have CR, MR, PD, PR, SD
+  samples_Liu <- samples_Liu %>% dplyr::filter(response %in% c("CR","MR","PR","PD","SD")) %>% droplevels() %>% as.data.frame() # THIS IS THE CORRECT
+  # samples_Liu <- samples_Liu %>% dplyr::filter(response %in% c("CR","PR","PD","SD")) %>% droplevels() %>% as.data.frame()
+  samples_Liu$response <- as.factor(samples_Liu$response)
+  levels(samples_Liu$response)<-c("CR+PR","MR", "PD", "CR+PR","SD")
+  
+  samples_Liu$tissue<- "melanoma"
+  samples_Liu$dataset<- "Liu"
+  #paste0(samples$run_accession, collapse=" ")
+  a <- paste0(samples_Liu$run_accession)
+  ## Load kallisto quantification files
+  files_l <- file.path(paste0(antiPDL1publicInputData,data.foldersList[["Liu"]],"/",my_kallisto_path.suffix,"/", a,"/", "abundance.tsv") )
+  names(files_l) <- paste0(a)
+  
+  print("Liu")
+  table(samples_Liu$response)
+  
+  all(file.exists(files_l))
+  
+  samples_Liu <- samples_Liu %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  #######################
+  ###### LOAD ROD #######
+  #######################
+  ### Import sample info of Hugo dataset
+  samples_Rod <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Rod"]],"/metadata/", "rod_clinical_RNA_ALL.csv")), header = TRUE, sep = ",")
+  # There are no SD
+  samples_Rod  <- samples_Rod %>% dplyr::filter(pre_on_treatment=="pre") %>% droplevels() %>% distinct()
+  samples_Rod$response <- as.factor(samples_Rod$response)
+  levels(samples_Rod$response)<-c("CR+PR","PD","CR+PR")
+  table(samples_Rod$response)
+  samples_Rod$tissue<- "melanoma"
+  samples_Rod$dataset<- "Rod"
+  
+  #########################
+  ## Run DESeq2 pipeline ##
+  #########################
+  files_rd <- file.path(antiPDL1publicInputData,data.foldersList[["Rod"]],"/",my_kallisto_path.suffix, samples_Rod$run_accession, "abundance.tsv")
+  names(files_rd) <- samples_Rod$run_accession
+  all(file.exists(files_rd))
+  samples_Rod<- samples_Rod %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  ##=================##
+  ## MERGE MELANOMAS ##
+  ##=================##
+  
+  # columnsToKeep <- unique(c(colnames(samples_Hugo),colnames(samples_Riaz),colnames(samples_Gide),
+  #                    colnames(samples_Liu), colnames(samples_Rod)))
+  # 
+  # 
+  # %>% select(title, run_accession, experiment_accession, 
+  #           age, gender, 
+  #           disease_status, biopsy_site, primary_tumor, treatment, prior_treatment, response, 
+  #           OS, dead, PFS, progressed,   
+  #           pre_on_treatment,
+  #           total_muts, nonsyn_muts,clonal_muts, subclonal_muts,TMB)
+  # 
+  # 
+  samples_melanoma<-list(samples_Hugo,samples_Riaz,samples_Gide,samples_Liu, samples_Rod)
+  names(samples_melanoma)<-datasets[1:5]
+  samples_melanoma.f <- lapply(datasets[1:5], function(x) select_columns(samples_melanoma[[x]],c("title","run_accession","age","gender", "disease_status", "biopsy_site", "primary_tumor", "treatment", "prior_treatment","response","OS.time","OS","PFS.time","PFS","pre_on_treatment","total_muts","nonsyn_muts",
+                                                                                                "clonal_muts","subclonal_muts","TMB","tissue","dataset")))
+  samples_melanoma.fm <- ldply(samples_melanoma.f)
+
+  
+  ## Load both
+  txi.mel <- tximport(c(files_h,files_r,files_g,files_l,files_rd), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  
+  dds_mel <- DESeqDataSetFromTximport(txi.mel, colData = samples_melanoma.fm, ~response)
+  dds_mel2 <- DESeqDataSetFromTximport(txi.mel, colData = samples_melanoma.fm, ~dataset + response)
+  
+  vsd.mel <- vst(dds_mel2)
+  save(vsd.mel,file=paste0(antiPDL1publicIntermediateData,"melanomaPREBATCH","_ALLresp",vst.batch.dataset.RData))
+  # plotPCA(vsd.mel, "dataset")
+  assay(vsd.mel) <- limma::removeBatchEffect(assay(vsd.mel), vsd.mel$dataset)
+  save(vsd.mel,file=paste0(antiPDL1publicIntermediateData,"melanomaPOSTBATCH","_ALLresp",vst.batch.dataset.RData))
+  # plotPCA(vsd.mel, "dataset")
+  vsd.mel <-assay(vsd.mel)
+  save(vsd.mel,file=paste0(antiPDL1publicIntermediateData,"melanoma","_ALLresp",vst.batch.dataset.RData))
+  
+  #Save tpm data
+  tpm.mel <-txi.mel$abundance
+  save(tpm.mel,file=paste0(antiPDL1publicIntermediateData,"melanoma","_ALLresp",tpm.RData))
+  
+  # Hugo
+  txi.hugo <- tximport(c(files_h), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_hugo <- DESeqDataSetFromTximport(txi.hugo, colData = samples_Hugo, ~response)
+  vsd.hugo <- vst(dds_hugo)
+  
+  vsd.hugo <-assay(vsd.hugo)
+  save(vsd.hugo,file=paste0(antiPDL1publicIntermediateData,datasets[1],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.hugo))
+  fpkm.uq <- apply(vsd.hugo, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Hugo")],"_ALLresp",fpkm.uq.RData))
+  
+  # Riaz
+  txi.riaz <- tximport(c(files_r), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_riaz <- DESeqDataSetFromTximport(txi.riaz, colData = samples_Riaz, ~response)
+  vsd.riaz <- vst(dds_riaz)
+  
+  vsd.riaz <-assay(vsd.riaz)
+  save(vsd.riaz,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Riaz")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.riaz))
+  fpkm.uq <- apply(vsd.riaz, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Riaz")],"_ALLresp",fpkm.uq.RData))
+  
+  # Gide
+  txi.gide <- tximport(c(files_g), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_gide <- DESeqDataSetFromTximport(txi.gide, colData = samples_Gide, ~response)
+  vsd.gide <- vst(dds_gide)
+  
+  vsd.gide <-assay(vsd.gide)
+  save(vsd.gide,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Gide")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.gide))
+  fpkm.uq <- apply(vsd.gide, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Gide")],"_ALLresp",fpkm.uq.RData))
+  # Liu
+  txi.liu <- tximport(c(files_l), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_liu <- DESeqDataSetFromTximport(txi.liu, colData = samples_Liu, ~response)
+  vsd.liu <- vst(dds_liu)
+  
+  vsd.liu <-assay(vsd.liu)
+  save(vsd.liu,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Liu")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.liu))
+  fpkm.uq <- apply(vsd.liu, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Liu")],"_ALLresp",fpkm.uq.RData))
+  # Rod
+  txi.rod <- tximport(c(files_rd), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_rod <- DESeqDataSetFromTximport(txi.rod, colData = samples_Rod, ~response)
+  vsd.rod <- vst(dds_rod)
+  
+  vsd.rod <-assay(vsd.rod)
+  save(vsd.rod,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Rod")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.rod))
+  fpkm.uq <- apply(vsd.rod, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Rod")],"_ALLresp",fpkm.uq.RData))
+  ##################################################################################################################
+  ##==============================================================================================================##
+  ##################################################################################################################
+  
+  #########
+  ## RCC ##
+  #########
+  
+  #############################
+  ##### LOAD MIAO HTSEQ #######
+  #############################
+  
+  ### Import sample info of Miao dataset
+  samples_Miao <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Miao"]],"/metadata/",  "miao_clinical_RNA_ALL.csv")), header = TRUE, sep = ",")
+  
+  samples_Miao <- samples_Miao %>% dplyr::filter(treatment %in% c("Atezolizumab","Nivolumab")) %>% droplevels() %>% distinct()
+  samples_Miao <- samples_Miao %>% dplyr::filter(response %in% c("PR","CR","SD","PD")) %>% droplevels() %>% distinct()
+  samples_Miao$response <- as.factor(samples_Miao$response)
+  levels(samples_Miao$response)<-c("PD","CR+PR","SD")
+  samples_Miao$tissue<- "RCC"
+  samples_Miao$dataset<- "Miao"
+  
+  print("Miao")
+  table(samples_Miao$response)
+  # # COhorts
+  # validation_samples <- subset(samples_Miao, samples_Miao$cohort_type %in% c("V"))
+  # discovery_samples <- subset(samples_Miao, samples_Miao$cohort_type %in% c("D"))
+  
+  files_mi <- file.path(antiPDL1publicInputData,data.foldersList[["Miao"]],"/",my_kallisto_path.suffix, samples_Miao$run_accession, "abundance.tsv")
+  names(files_mi) <- samples_Miao$run_accession
+  
+  all(file.exists(files_mi))
+
+  samples_Miao<- samples_Miao %>% dplyr::mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  #####################################
+  ###### LOAD Immotion150 HTSEQ #######
+  #####################################
+  ### Import sample info of Immotion150 dataset
+  samples_Immotion150 <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Immotion150"]],"/metadata/",  "immo_clinical_RNA_ALL.csv")), header = TRUE, sep = ",")
+  
+  # Choose monotherapy
+  samples_Immotion150 <- samples_Immotion150 %>% dplyr::filter(treatment %in% c( "Atezo")) %>% droplevels() %>% distinct()
+  
+  samples_Immotion150 <- samples_Immotion150 %>% dplyr::filter(response %in% c("CR","PR","PD","SD","NE")) %>% droplevels()
+  samples_Immotion150$response <- as.factor(samples_Immotion150$response)
+  levels(samples_Immotion150$response)<-c("CR+PR","NE","PD","CR+PR","SD")
+  
+  ## Import htseq files
+  a <- paste0(samples_Immotion150$run_accession)
+  a<-cSplit(as.data.frame(a), c("a"), c("_"))
+  a<-paste0(a$a_08,"_", a$a_09, "_",a$a_10,"_",a$a_11,"_",a$a_12,"_",a$a_13)
+  ## Load htseq quantification files
+  
+  samples_Immotion150$tissue<- "RCC"
+  samples_Immotion150$dataset<- "Immotion150"
+  print("Immotion 150")
+  table(samples_Immotion150$response)
+  
+  #########################
+  ## Run DESeq2 pipeline ##
+  ###########################
+  files_i <- file.path(paste0(antiPDL1publicInputData,data.foldersList[["Immotion150"]],"/",my_kallisto_path.suffix, "/",a), "abundance.tsv")
+  names(files_i) <- samples_Immotion150$run_accession
+ 
+  samples_Immotion150<- samples_Immotion150 %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  
+  ##=================##
+  ## MERGE RCC ##
+  ##=================##
+
+  samples_rcc<-list(samples_Miao,samples_Immotion150)
+  names(samples_rcc)<-datasets[c(6:7)]
+  samples_rcc.f <- lapply(datasets[c(6:7)], function(x) select_columns(samples_rcc[[x]],c("title","run_accession","age","gender", "disease_status", "biopsy_site", "primary_tumor", "treatment", "prior_treatment","response","OS.time","OS","PFS.time","PFS","pre_on_treatment","total_muts","nonsyn_muts",
+                                                                                                "clonal_muts","subclonal_muts","TMB","tissue","dataset")))
+  samples_rcc.fm <- ldply(samples_rcc.f)
+  
+  ## Load both
+  txi.rcc <- tximport(c(files_mi,files_i), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  
+  dds_rcc <- DESeqDataSetFromTximport(txi.rcc, colData = samples_rcc.fm, ~response)
+  dds_rcc2 <- DESeqDataSetFromTximport(txi.rcc, colData = samples_rcc.fm, ~dataset + response)
+  
+  vsd.rcc <- vst(dds_rcc2)
+  save(vsd.rcc,file=paste0(antiPDL1publicIntermediateData,"rccPREBATCH","_ALLresp",vst.batch.dataset.RData))
+  # plotPCA(vsd.rcc, "dataset")
+  assay(vsd.rcc) <- limma::removeBatchEffect(assay(vsd.rcc), vsd.rcc$dataset)
+  save(vsd.rcc,file=paste0(antiPDL1publicIntermediateData,"rccPOSTBATCH","_ALLresp",vst.batch.dataset.RData))
+  # plotPCA(vsd.rcc, "dataset")
+  vsd.rcc <-assay(vsd.rcc)
+  save(vsd.rcc,file=paste0(antiPDL1publicIntermediateData,"rcc","_ALLresp",vst.batch.dataset.RData))
+  
+  #Save tpm data
+  tpm.rcc <-txi.rcc$abundance
+  save(tpm.rcc,file=paste0(antiPDL1publicIntermediateData,"rcc","_ALLresp",tpm.RData))
+  
+  
+  # Miao
+  txi.miao <- tximport(c(files_mi), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_miao <- DESeqDataSetFromTximport(txi.miao, colData = samples_Miao, ~response)
+  vsd.miao <- vst(dds_miao)
+  
+  vsd.miao <-assay(vsd.miao)
+  save(vsd.miao,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Miao")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.miao))
+  fpkm.uq <- apply(vsd.miao, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Miao")],"_ALLresp",fpkm.uq.RData))
+  
+  # Immotion
+  txi.immo <- tximport(c(files_i), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_immo <- DESeqDataSetFromTximport(txi.immo, colData = samples_Immotion150, ~response)
+  vsd.immo <- vst(dds_immo)
+  
+  vsd.immo <-assay(vsd.immo)
+  save(vsd.immo,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Immotion150")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.immo))
+  fpkm.uq <- apply(vsd.immo, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Immotion150")],"_ALLresp",fpkm.uq.RData))
+  ##################################################################################################################
+  ##==============================================================================================================##
+  ##################################################################################################################
+  
+  #######################
+  ###### LOAD KIM #######
+  #######################
+  ### Import sample info of Kim dataset
+  samples_Kim <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Kim"]],"/metadata/",  "kim_clinical_RNA_ALL.csv")), header = TRUE, sep = ",")
+  # Subset samples to CR, PR, PD
+  samples_Kim <- samples_Kim %>% dplyr::filter(response %in% c("CR","PR","PD","SD")) %>% droplevels() %>% as.data.frame()
+  samples_Kim$response <- as.factor(samples_Kim$response)
+  levels(samples_Kim$response)<-c("CR+PR", "PD", "CR+PR","SD")
+  samples_Kim$tissue<- "gastric"
+  samples_Kim$dataset<- "Kim"
+  a <- paste0(samples_Kim$run_accession)
+  print("Kim")
+  table(samples_Kim$response)
+  
+ 
+  files_k <- file.path(antiPDL1publicInputData,data.foldersList[["Kim"]],"/",my_kallisto_path.suffix, samples_Kim$run_accession, "abundance.tsv")
+  names(files_k) <- samples_Kim$run_accession
+  
+  all(file.exists(files_k))
+  
+  samples_Kim<- samples_Kim %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  ##===============##
+  ## MERGE GASTRIC ##
+  ##===============##
+  samples_gastric<-list(samples_Kim)
+  names(samples_gastric)<-datasets[8]
+  samples_gastric.f <- lapply(datasets[8], function(x) select_columns(samples_gastric[[x]],c("title","run_accession","age","gender", "disease_status", "biopsy_site", "primary_tumor", "treatment", "prior_treatment","response","OS.time","OS","PFS.time","PFS","pre_on_treatment","total_muts","nonsyn_muts",
+                                                                                                "clonal_muts","subclonal_muts","TMB","tissue","dataset")))
+  samples_gastric.fm <- ldply(samples_gastric.f)
+  
+  # # Merge txi objects
+  txi.gastric <- tximport(c(files_k), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  ## Load in DESEQ2
+  dds.gastric <- DESeqDataSetFromTximport(txi.gastric, colData = samples_gastric.fm, ~response)
+  vsd.gastric <- vst(dds.gastric)
+  save(vsd.gastric,file=paste0(antiPDL1publicIntermediateData,"gastricPREBATCH","_ALLresp",vst.batch.dataset.RData))
+  # plotPCA(vsd.gastric, "dataset")
+  # assay(vsd.gastric) <- limma::removeBatchEffect(assay(vsd.gastric), vsd.gastric$dataset)
+  # save(vsd.gastric,file=paste0(projectRDataPath,"gastricPOSTBATCH","_",vst.batch.dataset.RData))
+  # plotPCA(vsd.gastric, "dataset")
+  vsd.gastric  <- assay(vsd.gastric )
+  save(vsd.gastric,file=paste0(antiPDL1publicIntermediateData,"gastric","_ALLresp",vst.batch.dataset.RData))
+  
+  #Save tpm data
+  tpm.gastric <- txi.gastric$abundance
+  save(tpm.gastric,file=paste0(antiPDL1publicIntermediateData,"gastric","_ALLresp",tpm.RData))
+  
+  
+  # KIM
+  save(vsd.gastric,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Kim")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.gastric))
+  fpkm.uq <- apply(vsd.gastric, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Kim")],"_ALLresp",fpkm.uq.RData))
+  
+  ##################################################################################################################
+  ##==============================================================================================================##
+  ##################################################################################################################
+  
+
+  ################################
+  ###### LOAD MARIATHASAN ########
+  ################################
+  
+  
+  ### Import sample info of Kim dataset
+  samples_Mari <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Mari"]],"/metadata/", "mariathasan_clinical_RNA_ALL.csv")), header = TRUE, sep = ",")
+  # Subset samples to CR, PR, PD,SD,NE
+  samples_Mari <- samples_Mari %>% dplyr::filter(response %in% c("CR","PR","PD","SD","NE")) %>% droplevels() %>% as.data.frame()
+  samples_Mari$response <- as.factor(samples_Mari$response)
+  levels(samples_Mari$response)<-c("CR+PR", "NE","PD", "CR+PR","SD")
+  samples_Mari$tissue<- "bladder"
+  samples_Mari$dataset<- "Mari"
+  a <- paste0(samples_Mari$run_accession)
+  print("Mariathasan")
+  table(samples_Mari$response)
+  
+  files_mr <- file.path(antiPDL1publicInputData,data.foldersList[["Mari"]],"/",my_kallisto_path.suffix, samples_Mari$run_accession, "abundance.tsv")
+  names(files_mr) <- samples_Mari$run_accession
+  
+  samples_Mari<- samples_Mari %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  ######################################
+  ###### LOAD POWLES HTSEQ ########
+  ######################################
+  
+  ### Import sample info of Kim dataset
+  samples_Powles <- read.table(file.path(paste0(antiPDL1publicInputData,data.foldersList[["Powles"]],"/metadata/", "powles_clinical_RNA_ALL.csv")), header = TRUE, sep = ",")
+  samples_Powles  <- samples_Powles %>% dplyr::filter(pre_on_treatment=="pre") %>% droplevels() %>% distinct()
+
+  # Subset samples to CR, PR, PD,SD-NO SD
+  samples_Powles <- samples_Powles %>% dplyr::filter(response %in% c("CR","PR","PD","SD")) %>% droplevels() %>% as.data.frame()
+  samples_Powles$response <- as.factor(samples_Powles$response)
+  levels(samples_Powles$response)<-c("CR+PR", "PD", "CR+PR")
+  samples_Powles$tissue<- "bladder"
+  samples_Powles$dataset<- "Powles"
+  a <- paste0(samples_Powles$run_accession)
+  
+  print("Powles")
+  table(samples_Powles$response)
+
+  files_p <- file.path(antiPDL1publicInputData,data.foldersList[["Powles"]],"/",my_kallisto_path.suffix, samples_Powles$run_accession, "abundance.tsv")
+  names(files_p) <- samples_Powles$run_accession
+  
+   samples_Powles<- samples_Powles %>% mutate_at(c("title","run_accession","gender","disease_status",
+                                               "biopsy_site", "primary_tumor", "treatment", "prior_treatment",
+                                               "response","pre_on_treatment"), as.character)
+  ##===============##
+  ## MERGE BLADDER ##
+  ##===============##
+  samples_bladder<-list(samples_Mari,samples_Powles)
+  names(samples_bladder)<-datasets[9:10]
+  samples_bladder.f <- lapply(datasets[9:10], function(x) select_columns(samples_bladder[[x]],c("title","run_accession","age","gender", "disease_status", "biopsy_site", "primary_tumor", "treatment", "prior_treatment","response","OS.time","OS","PFS.time","PFS","pre_on_treatment","total_muts","nonsyn_muts",
+                                                                                                "clonal_muts","subclonal_muts","TMB","tissue","dataset")))
+  samples_bladder.fm <- ldply(samples_bladder.f)
+  
+  ## Load both
+  txi.bladder <- tximport(c(files_mr,files_p), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  
+  dds.bladder <- DESeqDataSetFromTximport(txi.bladder, colData = samples_bladder.fm, ~response)
+  dds.bladder2 <- DESeqDataSetFromTximport(txi.bladder, colData = samples_bladder.fm, ~dataset + response)
+  
+  
+  vsd.bladder <- vst(dds.bladder2)
+  save(vsd.bladder,file=paste0(antiPDL1publicIntermediateData,"bladderPREBATCH","_ALLresp",vst.batch.dataset.RData))
+  # plotPCA(vsd.bladder, "dataset")
+  assay(vsd.bladder) <- limma::removeBatchEffect(assay(vsd.bladder), vsd.bladder$dataset)
+  save(vsd.bladder,file=paste0(antiPDL1publicIntermediateData,"bladderPOSTBATCH","_ALLresp",vst.batch.dataset.RData))
+  # plotPCA(vsd.bladder, "dataset")
+  vsd.bladder <-assay(vsd.bladder)
+  save(vsd.bladder,file=paste0(antiPDL1publicIntermediateData,"bladder","_ALLresp",vst.batch.dataset.RData))
+  
+  #Save tpm data
+  tpm.bladder <-txi.bladder$abundance
+  save(tpm.bladder,file=paste0(antiPDL1publicIntermediateData,"bladder","_ALLresp",tpm.RData))
+  
+  
+   # Mariathasan
+  txi.mari <- tximport(c(files_mr), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_mari <- DESeqDataSetFromTximport(txi.mari, colData = samples_Mari, ~response)
+  vsd.mari <- vst(dds_mari)
+  
+  vsd.mari <-assay(vsd.mari)
+  save(vsd.mari,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Mari")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.mari))
+  fpkm.uq <- apply(vsd.mari, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Mari")],"_ALLresp",fpkm.uq.RData))
+  
+  # Powles
+  txi.powles <- tximport(c(files_p), type = "kallisto", ignoreTxVersion = FALSE, countsFromAbundance="no", txOut=FALSE,tx2gene = tx2gene)
+  dds_powles <- DESeqDataSetFromTximport(txi.powles, colData = samples_Powles, ~response)
+  vsd.powles <- vst(dds_powles)
+  
+  vsd.powles <-assay(vsd.powles)
+  save(vsd.powles,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Powles")],"_ALLresp",vst.batch.dataset.RData))
+  
+  exonic.gene.sizes2.sub <- subset(exonic.gene.sizes2, exonic.gene.sizes2$gene_name %in% rownames(vsd.powles))
+  fpkm.uq <- apply(vsd.powles, 2, function(x) fpkm_uq(x, exonic.gene.sizes2.sub$length)) 
+  save(fpkm.uq,file=paste0(antiPDL1publicIntermediateData,datasets[which(datasets=="Powles")],"_ALLresp",fpkm.uq.RData))
+  ##################################################################################################################
+  ##==============================================================================================================##
+  ##################################################################################################################
+  
+  # # Save samples TISSUE list in RData
+  samples_tissues<- list(samples_melanoma.fm, samples_rcc.fm, samples_gastric.fm, samples_bladder.fm)
+  names(samples_tissues)<-c("melanoma","RCC","gastric","bladder")
+   # Save samples DATASET list in RData
+  save(samples_tissues,file=paste0(antiPDL1publicIntermediateData,"samples.aPD1.tpm.batch.TISSUE","_ALLresp",Rdata.suffix))
+  # List of samples dataframes
+  samples_all <- list(samples_Hugo,samples_Riaz,samples_Gide,samples_Liu,samples_Rod,samples_Miao,samples_Immotion150,samples_Kim,samples_Mari, samples_Powles)
+  names(samples_all)<-datasets[1:10]
+  # Save samples list in RData
+  save(samples_all,file=paste0(antiPDL1publicIntermediateData,"samples.aPD1.f.tpm.dataset","_ALLresp",Rdata.suffix))
+ 
+}
+samples_tissues <- loadRData(paste0(antiPDL1publicIntermediateData,"samples.aPD1.tpm.batch.TISSUE","_ALLresp",Rdata.suffix))
+samples_all.merged <- bind_rows(samples_tissues)
+dim(samples_all.merged)
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+
+datatable(samples_all.merged %>% dplyr::filter(complete.cases(response)) %>% dplyr::select(run_accession,response,dataset) %>% group_by(dataset,response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients in all datasets, with both PFS and OS'
+)
+```
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(samples_all.merged %>% dplyr::filter(complete.cases(response)) %>% dplyr::select(run_accession,response,dataset) %>% group_by(response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Total number of CR/PR/SD/PD/NE/UNK across datasets, with both PFS and OS'
+)
+```
+
+```{r ,warning=F, message=T,fig.show = 'hold', fig.width=18, fig.height=10, eval=TRUE}
+# x <-get_mixture_from_tpm(projectRDataPath,projectDataPath, paste0("rcc","_ALLresp"),tpm.RData,LM22_signMatrix)
+all_mixtures <- sapply(c("melanoma","rcc","gastric","bladder"), function(x) get_mixture_from_tpm(antiPDL1publicIntermediateData,antiPDL1publicIntermediateData, paste0(x,"_ALLresp"),tpm.RData,LM22_signMatrix))
+# # Read mixture matrices
+# mixture_tcga_tp <- read_tsv(file.path(my_mixtures_path, paste0(mydataset,'tp_',"mixture_matrix.txt")))
+```
+
+
+# Run CIBERSORT
+
+```{r cibersortRunMult,warning=F, message=F,fig.show = 'hold', fig.width=18, fig.height=10, eval=FALSE}
+set.seed(123)
+seeds <- sample(1:5000, 20, replace=TRUE)
+
+# cibersortSeedRuns_res <- sapply(seeds[1:2], function(x) run_absModeCibersort(paste0(immuCC_path,"LM25_Signaturematrix.txt"), paste0(scriptDataPath,"mixture_matrix.txt"),permutations=1000,x), simplify = FALSE)
+
+## Try parallel sapply
+
+### ABSOLUTE
+no_cores <- detectCores() - 1
+# # Download all data
+# no_cores <-2
+cl <- makeCluster(no_cores)
+# all_var<-ls()
+# clusterExport(cl, all_var)
+clusterEvalQ(cl, {c(library(parallel),library(e1071),library(preprocessCore)); RNGkind("L'Ecuyer-CMRG")})
+# Export the play() function to the cluster
+clusterExport(cl,c("run_absModeCibersort","cibersortPath","scriptsFunctionsPath","CIBERSORT","doPerm","CoreAlg"))
+clusterSetRNGStream(cl=cl,3456)
+cibersortSeedRuns_Absres <- parSapply(cl,seeds, function(x) run_absModeCibersort(paste0(cibersortPath,"LM25_Signaturematrix.txt"), paste0(scriptDataPath,"mixture_matrix.txt"),permutations=1000,x),simplify = FALSE)
+
+save(cibersortSeedRuns_Absres,file=paste0(antiPDL1publicIntermediateData,"cibersortSeedRuns_Absres.corr",Rdata.suffix))
+stopCluster(cl)
+
+### RELATIVE
+no_cores <- detectCores() - 1
+# # Download all data
+# no_cores <-2
+cl <- makeCluster(no_cores)
+# all_var<-ls()
+# clusterExport(cl, all_var)
+clusterEvalQ(cl, {c(library(parallel),library(e1071),library(preprocessCore)); RNGkind("L'Ecuyer-CMRG")})
+# Export the play() function to the cluster
+clusterExport(cl,c("run_relModeCibersort","cibersortPath","scriptsFunctionsPath","CIBERSORT","doPerm","CoreAlg"))
+clusterSetRNGStream(cl=cl,3756)
+
+cibersortSeedRuns_Relres <- parSapply(cl,seeds, function(x) run_relModeCibersort(paste0(cibersortPath,"LM25_Signaturematrix.txt"), paste0(scriptDataPath,"mixture_matrix.txt"),permutations=1000,x),simplify = FALSE)
+
+save(cibersortSeedRuns_Relres,file=paste0(antiPDL1publicIntermediateData,"cibersortSeedRuns_Relres.corr",Rdata.suffix))
+stopCluster(cl)
+
+```
+
+```{r cibersortRun,warning=F, message=F,fig.show = 'hold', fig.width=18, fig.height=10, eval=TRUE}
+if (file.exists(paste0(antiPDL1publicIntermediateData,"resCiber_abs.RData")) && file.exists(paste0(antiPDL1publicIntermediateData,"resCiber_rel.RData"))){
+  # Load
+  resCiber_abs <- loadRData(paste0(antiPDL1publicIntermediateData,"resCiber_abs.RData"))
+  resCiber_rel <- loadRData(paste0(antiPDL1publicIntermediateData,"resCiber_rel.RData"))
+
+}else{
+  ## Absolute quantification
+  resCiber_abs <- sapply(c("melanoma","rcc","gastric","bladder"),function(x) run_absModeCibersort(paste0(cibersortPath,LM22_signatureFileName),paste0(antiPDL1publicIntermediateData, x,"_ALLresp","mixture_matrix.txt"),permutations=100,seed=6723))
+  
+  # Save object
+  save(resCiber_abs, file = paste0(antiPDL1publicIntermediateData,"resCiber_abs.RData"))
+  
+  # Relative quantification
+  resCiber_rel <- sapply(c("melanoma","rcc","gastric","bladder"),function(x) run_relModeCibersort(paste0(cibersortPath,LM22_signatureFileName),paste0(antiPDL1publicIntermediateData, x,"_ALLresp","mixture_matrix.txt"),permutations=100,seed=6723))
+  # Save object
+  save(resCiber_rel, file = paste0(antiPDL1publicIntermediateData,"resCiber_rel.RData"))
+  
+}
+
+```
+
+<div class="alert alert-warning">
+  <strong>Note:</strong> Need to check if setting the seed is necessary for CIBERSORT,i.e. the stochastic parameter mentioned by Asier. If so, calculate the errors & the variance by settting multiple different seeds.
+</div>
+
+```{r loadCibersortResults,warning=F, message=F,fig.show = 'hold', fig.width=18, fig.height=10}
+
+
+# Gather absolute results
+resCiber_Abs.n <-sapply(1:length(resCiber_abs), function(x) addRownames(resCiber_abs[[x]]), simplify = FALSE)
+
+resCiber_Abs.df <- as.data.frame(do.call(rbind, unname(resCiber_Abs.n)))
+
+# Gather absolute results
+resCiber_Rel.n <-sapply(1:length(resCiber_rel), function(x) addRownames(resCiber_rel[[x]]), simplify = FALSE)
+
+resCiber_Rel.df <- as.data.frame(do.call(rbind, unname(resCiber_Rel.n)))
+
+```
+
+# Results 
+
+## Tables {.tabset .tabset-fade .tabset-pills}
+
+### Relative Abundances
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(resCiber_Rel.df, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=5
+  ),
+  caption = 'Relative Immune infiltration abundances'
+)
+```
+
+### Absolute Abundances
+
+```{r,warning=F, message=F,eval=TRUE}
+
+
+datatable(resCiber_Abs.df, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=5
+  ),
+  caption = 'Absolute Immune infiltration abundances'
+)
+```
+
+## Results Versions
+
+LM22 signature includes 22 immune populations. For this analysis it was decided to create two versions of immune populations, and exclude/aggregate some populations in the resuts:
+
+1. Compact version:
+
+  - B-cell (mem+naïve+plasma cell)
+  - CD8 
+  - CD4 (naïve+mem.rest + mem.activ)
+  - T-reg
+  - NK cell (rest+activated)
+  - DC (rest+activated)
+  - Monocyte
+  - Granulocytes (eosinophil+mast cell+neutrophil)
+  - Macrophages (m0+m1+m2)
+  
+2. Extended version:
+
+  * Merge the following:
+    - Granulocyte (mast cell+neutrophil+eosinophil)
+    - B Cell (mem+naïve+plasma cell)
+    - NK cell (rest+activated)
+    - DC (rest+activated)
+  * Remove:
+    - T cell cd4 follicular
+    - Th17
+    
+For absolute cibersort results, I have added the scores for the aggregated populations.
+For relative cibersort results (fractions), the aggregated fractions were also produced by summing the fractions of the populations being aggregated.
+
+**Remember**
+
+***
+
+* Relative mode: Immune cell fractions, relative to total immune cell content . Can be used for intrasample comparisons only. It estimates the relative fraction of each cell type in the signature matrix, such that the sum of all fractions is equal to 1 for a given mixture sample. Relative mode purely focuses on capturing compositional changes in the immune content.
+
+* Absolute mode: Score of arbitrary units that reflects the absolute proportion of each cell type, absolute mode can be used to produce a score that quantitatively measures the overall abundance of each cell type. Briefly, the absolute immune fraction score is estimated by the median expression level of all genes in the signature matrix divided by the median expression level of all genes in the mixture. In this mode, CIBERSORT calculates a “scaling factor” to measure the amount of total immune content in the sample, allowing the calculation of “absolute” scores (which are the product of the scaling factor and cellular proportions). Αbsolute scores that can be interpreted as cell fractions and compared both inter- and intra-sample. Absolute mode allows for:
+  - intra-sample comparisons between cell types
+  - inter-sample comparisons of the same cell type
+  
+In practice, CIBERSORT expresses results as a fraction relative to the immune-cell content. CIBERSORT has been extended to the ‘absolute mode’, which provides a score that can be compared between both samples and cell types but still cannot be interpreted as a cell fraction.
+
+Some references of the above:
+
+* [Newman et. al](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4739640/)
+* [Sturm et. al](https://academic.oup.com/bioinformatics/article/35/14/i436/5529146)
+
+**Merging cell subtype estimates into single scores**
+
+***
+By taking the sum of multiple original default cell-type scores.
+
+Two papers below that did the same:
+
+* [Mardestein et. al](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7200670/)
+* [Rohr-Udilova et. al](https://www.nature.com/articles/s41598-018-24437-5)
+
+When ran in absolute mode we end up with a results file that includes a column of Absolute score for each sample, which is the sum of all cell subsets in each mixture sample. This score will capture total immune content.
+
+### Compact version{.tabset .tabset-fade .tabset-pills}
+
+??What about relative fractions??
+If I only select a few populations then the fractions will not go up to 100%.
+I recalculated the fractions by analogy to the "new" 100%.
+
+```{r,warning=F, message=F,eval=TRUE}
+compactPopulations <- c("B.cells.naive","B.cells.memory","Plasma.cells","T.cells.CD8","T.cells.CD4.naive"           ,"T.cells.CD4.memory.resting","T.cells.CD4.memory.activated", "T.cells.regulatory..Tregs.", "NK.cells.resting"        ,"NK.cells.activated", "Dendritic.cells.resting"    ,"Dendritic.cells.activated","Monocytes","Eosinophils","Mast.cells.resting",       "Mast.cells.activated","Neutrophils","Macrophages.M0", "Macrophages.M1","Macrophages.M2")
+
+# bcells <-c("B.Cells.Memory","B.Cells.Naive","Plasma.Cells")
+# cd8 <-c("T.Cells.CD8.Naive","T.Cells.CD8.Actived","T.Cells.CD8.Memory")
+# cd4 <-c("T.Cells.CD4.Naive","T.Cells.CD4.Memory")
+# treg <-"Treg.Cells"
+# nkcell <-c("NK.Resting", "NK.Actived")
+# dc <-c("DC.Actived", "DC.Immature")
+# mono <-"Monocyte"
+# gran <-c("Eosinophil.Cells","Mast.Cells", "Neutrophil.Cells")
+# macro<-c("M0.Macrophage", "M1.Macrophage","M2.Macrophage")
+
+compactPopGroupsList <- list(Bcells=c("B.cells.naive","B.cells.memory","Plasma.cells"),
+                             CD8cells=c("T.cells.CD8"),
+                             CD4cells=c("T.cells.CD4.naive"       ,"T.cells.CD4.memory.resting","T.cells.CD4.memory.activated"),
+                             Tregs = c("T.cells.regulatory..Tregs."),
+                             NKcells=c("NK.cells.resting","NK.cells.activated"),
+                             DCcells=c("Dendritic.cells.resting","Dendritic.cells.activated"),
+                             Monocytes=c("Monocytes"),
+                             Granulocytes=c("Eosinophils","Mast.cells.resting",       "Mast.cells.activated","Neutrophils"),
+                             Macrophages=c("Macrophages.M0", "Macrophages.M1","Macrophages.M2"))
+
+compactNames<- names(compactPopGroupsList)
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+## ABSOLUTE
+
+# Subset to compact sub-populations
+resCiber_abs.c <- resCiber_Abs.df[,c("sampleID",compactPopulations)]
+resCiber_abs.c <- resCiber_abs.c %>% column_to_rownames(var="sampleID")
+
+absCompact<- sapply(1:length(compactNames), function(x) sumColumns(resCiber_abs.c,compactNames[x],compactPopGroupsList[[x]]),simplify = FALSE)
+
+absCompact <- bind_cols(absCompact)
+
+## RELATIVE
+# Subset to compact sub-populations
+resCiber_rel.c <- resCiber_Rel.df[,compactPopulations]
+
+relCompact<- sapply(1:length(compactNames), function(x) sumColumns(resCiber_rel.c,compactNames[x],compactPopGroupsList[[x]]),simplify = FALSE)
+relCompact <- bind_cols(relCompact)
+# Multiply all cells by 100 to better represent %
+relCompact <- relCompact*100
+relCompactNewTotal<-as.numeric(rowSums(relCompact))
+# Get new fractions based on the new total
+resNewFract <-sapply(1:nrow(relCompact),function(x) newFractions(relCompact[x,],relCompactNewTotal[x]),simplify = FALSE)
+relCompact.new <- bind_rows(resNewFract)
+#rowSums(relCompact.new)
+```
+
+
+#### Absolute
+
+```{r,warning=F, message=F,eval=TRUE}
+
+datatable(absCompact, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=5
+  ),
+  caption = 'Absolute Immune infiltration abundances-COMPACT'
+)
+```
+
+#### Relative
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(relCompact.new, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=5
+  ),
+  caption = 'Relative Immune infiltration fractions - COMPACT'
+)
+```
+
+# Heatmaps{.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,eval=TRUE,echo=FALSE}
+
+# display.brewer.all(colorblindFriendly = T)
+
+#palette using grey
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+#palette using black
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+
+myCBfriendly.dark.small <- c("#222255","#225555","#225522","#666633","#663333","#555555")
+
+myCBfriendly.pale.small <- c("#bbccee","#cceeff","#ccddaa","#eeeebb","#ffcccc","#dddddd")
+
+myCBfriendly.light.medium <- c("#77aadd","#99ddff","#44bb99","#bbcc33","#aaaa00","#eedd88","#ee8866","#ffaabb","#dddddd")
+
+myCBfriendly.bright.small <- c("#4477aa","#66ccee","#228833","#ccbb44","#ee6677","#bbbbbb")
+
+myCBfriendly.highContr.small <- c("#ffffff","#ddaa33","#bb5566","#004488","#000000")
+
+myCBfriendly.muted.medium<- c("#332288","#88ccee","#44aa99","#117733","#999933","#ddcc77","#cc6677","#882255","#aa4499","#dddddd")
+
+
+myCBfriendly.large <-c(brewer.pal(9,"Set2"),brewer.pal(8,"Dark2"),"#cc3311")
+
+```
+
+
+
+```{r ,warning=F, message=F,fig.show = 'hold', fig.width=20, fig.height=12}
+
+## Annotation colors
+col_fun = colorRamp2(c(0,0.2, 2.2), c("navy", "white", "firebrick3"))#"navy",
+
+absCompact.m <-absCompact %>% rownames_to_column(var="sampleID") %>% melt()
+
+absCompact.m.mel <- absCompact.m %>% dplyr::filter(sampleID %in% samples_tissues$melanoma$run_accession) %>% droplevels()
+absCompact.m.mel.all <- merge(absCompact.m.mel, samples_tissues$melanoma[,c(2:5)], by.x="sampleID", by.y="run_accession")
+
+# Without melting
+absCompact.all <- absCompact %>% rownames_to_column(var="sampleID")
+absCompact.all<- merge(absCompact.all, samples_all.merged, by.x="sampleID", by.y="run_accession")
+```
+
+```{r ,warning=F, message=F,fig.show = 'hold', fig.width=20, fig.height=12}
+
+# MELANOMA
+absCompact.all.sub <-rbind(samples_tissues$melanoma[samples_tissues$melanoma$tissue %in% c("melanoma"),])#,samples_tissues$gastric[samples_tissues$gastric$dataset %in% c("Kim"),]
+absCompact.s<- absCompact.all %>% dplyr::filter(sampleID %in% absCompact.all.sub$run_accession)
+
+absCompact.s<- absCompact.s %>% column_to_rownames(var="sampleID") %>% droplevels()
+
+# set.seed(2643598)                                             # Set random seed
+# col_fun2 <- sample(palette3_all, length(unique(absCompact.all$dataset)))
+set.seed(1983765)                                             # Set random seed
+palette4 <- distinctColorPalette(length(unique(absCompact.s$dataset)))                    # Sample colors
+col_fun2 <-palette4  
+
+# col_fun2 <-sample(col_vector, length(unique(absCompact.all$dataset)))
+names(col_fun2) <- unique(absCompact.s$dataset)
+ha = HeatmapAnnotation(response = absCompact.s$response,
+                       # dataset = absCompact.s$dataset,
+                       col = list(response = c("CR+PR" = "seagreen", "PD" = "indian red", "SD" = "orange", "UNK" = "steelblue", "NE"="grey", "MR"="magenta")#,dataset = col_fun2
+                                  ),
+                       gp = gpar(col = "black"))
+
+
+#colorRampPalette(c("navy", "white", "firebrick3"))(50)
+ht.mel = Heatmap(t(absCompact.s[,1:9]),
+        # border_gp = gpar(col = "black", lty = 2),
+        rect_gp = gpar(col = "white", lwd = 2),
+        col = col_fun,
+        column_title = "",
+        column_title_side = "bottom",
+        column_title_gp = gpar(fontsize = 16, fontface = "bold"),
+        show_column_names = FALSE,
+        row_title = "I am a row title",
+        # row_title_rot = 45,
+        name = "Absolute Infiltration score",
+        cluster_rows = FALSE,
+        # show_column_dend = FALSE
+        # column_dend_side = "bottom"
+        # cluster_columns = agnes,
+        # cluster_columns = cluster_within_group(mat, group)
+        row_dend_reorder = TRUE,
+        row_names_side = "left",
+        # row_dend_side = "right"
+        column_dend_side = "top",
+        # row_km = 2,
+        # column_km = 2,
+        # row_split = rep(c("A", "B"), 9), 
+        column_split = absCompact.s$dataset,
+        column_gap = unit(c(4), "mm"),
+        border = TRUE,
+        top_annotation = ha,
+        heatmap_legend_param = list(direction = "horizontal")
+        )
+
+# RCC
+absCompact.all.sub <-samples_all.merged %>% dplyr::filter(tissue %in% c("RCC"))#,samples_tissues$gastric[samples_tissues$gastric$dataset %in% c("Kim"),]
+absCompact.s<- absCompact.all %>% dplyr::filter(sampleID %in% absCompact.all.sub$run_accession)
+
+absCompact.s<-absCompact.s %>% column_to_rownames(var="sampleID") %>% droplevels()
+
+# set.seed(2643598)                                             # Set random seed
+# col_fun2 <- sample(palette3_all, length(unique(absCompact.all$dataset)))
+set.seed(1983765)                                             # Set random seed
+palette4 <- distinctColorPalette(length(unique(absCompact.s$dataset)))                    # Sample colors
+col_fun2 <-palette4  
+
+# col_fun2 <-sample(col_vector, length(unique(absCompact.all$dataset)))
+names(col_fun2) <- unique(absCompact.s$dataset)
+ha = HeatmapAnnotation(response = absCompact.s$response,
+                       # dataset = absCompact.s$dataset,
+                       col = list(response = c("CR+PR" = "seagreen", "PD" = "indian red", "SD" = "orange", "UNK" = "steelblue", "NE"="grey", "MR"="magenta")#,dataset = col_fun2
+                                  ),
+                       gp = gpar(col = "black"))
+
+
+#colorRampPalette(c("navy", "white", "firebrick3"))(50)
+ht.rcc = Heatmap(t(absCompact.s[,1:9]),
+        # border_gp = gpar(col = "black", lty = 2),
+        rect_gp = gpar(col = "white", lwd = 2),
+        col = col_fun,
+        column_title = "",
+        column_title_side = "bottom",
+        column_title_gp = gpar(fontsize = 16, fontface = "bold"),
+        show_column_names = FALSE,
+        row_title = "I am a row title",
+        # row_title_rot = 45,
+        name = "Absolute Infiltration score",
+        cluster_rows = FALSE,
+        # show_column_dend = FALSE
+        # column_dend_side = "bottom"
+        # cluster_columns = agnes,
+        # cluster_columns = cluster_within_group(mat, group)
+        row_dend_reorder = TRUE,
+        row_names_side = "left",
+        # row_dend_side = "right"
+        column_dend_side = "top",
+        # row_km = 2,
+        # column_km = 2,
+        # row_split = rep(c("A", "B"), 9), 
+        column_split = absCompact.s$dataset,
+        column_gap = unit(c(4), "mm"),
+        border = TRUE,
+        top_annotation = ha,
+        heatmap_legend_param = list(direction = "horizontal")
+        )
+
+# Bladder
+absCompact.all.sub <-samples_all.merged %>% dplyr::filter(tissue %in% c("bladder"))#,samples_tissues$gastric[samples_tissues$gastric$dataset %in% c("Kim"),]
+absCompact.s<- absCompact.all %>% dplyr::filter(sampleID %in% absCompact.all.sub$run_accession)
+
+absCompact.s<- absCompact.s %>% column_to_rownames(var="sampleID") %>% droplevels()
+
+# set.seed(2643598)                                             # Set random seed
+# col_fun2 <- sample(palette3_all, length(unique(absCompact.all$dataset)))
+set.seed(1983765)                                             # Set random seed
+palette4 <- distinctColorPalette(length(unique(absCompact.s$dataset)))                    # Sample colors
+col_fun2 <-palette4  
+
+# col_fun2 <-sample(col_vector, length(unique(absCompact.all$dataset)))
+names(col_fun2) <- unique(absCompact.s$dataset)
+ha = HeatmapAnnotation(response = absCompact.s$response,
+                       # dataset = absCompact.s$dataset,
+                       col = list(response = c("CR+PR" = "seagreen", "PD" = "indian red", "SD" = "orange", "UNK" = "steelblue", "NE"="grey", "MR"="magenta")#,dataset = col_fun2
+                                  ),
+                       gp = gpar(col = "black"))
+
+
+#colorRampPalette(c("navy", "white", "firebrick3"))(50)
+ht.bladder = Heatmap(t(absCompact.s[,1:9]),
+        # border_gp = gpar(col = "black", lty = 2),
+        rect_gp = gpar(col = "white", lwd = 2),
+        col = col_fun,
+        column_title = "",
+        column_title_side = "bottom",
+        column_title_gp = gpar(fontsize = 16, fontface = "bold"),
+        show_column_names = FALSE,
+        row_title = "I am a row title",
+        # row_title_rot = 45,
+        name = "Absolute Infiltration score",
+        cluster_rows = FALSE,
+        # show_column_dend = FALSE
+        # column_dend_side = "bottom"
+        # cluster_columns = agnes,
+        # cluster_columns = cluster_within_group(mat, group)
+        row_dend_reorder = TRUE,
+        row_names_side = "left",
+        # row_dend_side = "right"
+        column_dend_side = "top",
+        # row_km = 2,
+        # column_km = 2,
+        # row_split = rep(c("A", "B"), 9), 
+        column_split = absCompact.s$dataset,
+        column_gap = unit(c(4), "mm"),
+        border = TRUE,
+        top_annotation = ha,
+        heatmap_legend_param = list(direction = "horizontal")
+        )
+# gastric
+
+absCompact.all.sub <-samples_all.merged %>% dplyr::filter(tissue %in% c("gastric"))#,samples_tissues$gastric[samples_tissues$gastric$dataset %in% c("Kim"),]
+absCompact.s<- absCompact.all %>% dplyr::filter(sampleID %in% absCompact.all.sub$run_accession)
+
+absCompact.s<- absCompact.s %>% column_to_rownames(var="sampleID") %>% droplevels()
+
+# set.seed(2643598)                                             # Set random seed
+# col_fun2 <- sample(palette3_all, length(unique(absCompact.all$dataset)))
+set.seed(1983765)                                             # Set random seed
+palette4 <- distinctColorPalette(length(unique(absCompact.s$dataset)))                    # Sample colors
+col_fun2 <-palette4  
+
+# col_fun2 <-sample(col_vector, length(unique(absCompact.all$dataset)))
+names(col_fun2) <- unique(absCompact.s$dataset)
+ha = HeatmapAnnotation(response = absCompact.s$response,
+                       # dataset = absCompact.s$dataset,
+                       col = list(response = c("CR+PR" = "seagreen", "PD" = "indian red", "SD" = "orange", "UNK" = "steelblue", "NE"="grey", "MR"="magenta")#,dataset = col_fun2
+                                  ),
+                       gp = gpar(col = "black"))
+
+
+#colorRampPalette(c("navy", "white", "firebrick3"))(50)
+ht.gastric = Heatmap(t(absCompact.s[,1:9]),
+        # border_gp = gpar(col = "black", lty = 2),
+        rect_gp = gpar(col = "white", lwd = 2),
+        col = col_fun,
+        column_title = "",
+        column_title_side = "bottom",
+        column_title_gp = gpar(fontsize = 16, fontface = "bold"),
+        show_column_names = FALSE,
+        row_title = "I am a row title",
+        # row_title_rot = 45,
+        name = "Absolute Infiltration score",
+        cluster_rows = FALSE,
+        # show_column_dend = FALSE
+        # column_dend_side = "bottom"
+        # cluster_columns = agnes,
+        # cluster_columns = cluster_within_group(mat, group)
+        row_dend_reorder = TRUE,
+        row_names_side = "left",
+        # row_dend_side = "right"
+        column_dend_side = "top",
+        # row_km = 2,
+        # column_km = 2,
+        # row_split = rep(c("A", "B"), 9), 
+        column_split = absCompact.s$dataset,
+        column_gap = unit(c(4), "mm"),
+        border = TRUE,
+        top_annotation = ha,
+        heatmap_legend_param = list(direction = "horizontal")
+        )
+
+```
+
+## MELANOMA
+
+```{r heatmap1,warning=F, message=F, fig.width=20, fig.height=12,fig.show = 'hold',dev='svg'}
+draw(ht.mel,merge_legend = TRUE, heatmap_legend_side = "bottom", annotation_legend_side = "bottom")
+```
+
+## RCC
+
+```{r heatmap2,warning=F, message=F, fig.width=20, fig.height=12,fig.show = 'hold',dev='svg'}
+draw(ht.rcc,merge_legend = TRUE, heatmap_legend_side = "bottom", annotation_legend_side = "bottom")
+```
+
+## GASTRIC
+
+```{r heatmap3,warning=F, message=F, fig.width=20, fig.height=12,fig.show = 'hold',dev='svg'}
+draw(ht.gastric,merge_legend = TRUE, heatmap_legend_side = "bottom", annotation_legend_side = "bottom")
+```
+
+## BLADDER
+
+```{r heatmap4,warning=F, message=F, fig.width=20, fig.height=12,fig.show = 'hold',dev='svg'}
+draw(ht.bladder,merge_legend = TRUE, heatmap_legend_side = "bottom", annotation_legend_side = "bottom")
+```
+
+# Estimate stromal and immune cells in malignant tumor tissues
+
+Estimation of STromal and Immune cells in MAlignant Tumor tissues using Expression data
+
+[Check this](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6861210/):
+the clinical importance of stromal and immune cells in the gastric cancer microenvironment. However, reliable prognostic signatures based on assessments of stromal and immune components have not been well-establishe.
+
+ESTIMATE provides researchers with scores for tumor purity, the level of stromal cells present, and the infiltration level of immune cells in tumor tissues based on expression data.
+
+ESTIMATE (Estimation of STromal and Immune cells in MAlignant Tumor tissues using Expression data) is a tool for predicting tumor purity, and the presence of infiltrating stromal/immune cells in tumor tissues using gene expression data. ESTIMATE algorithm is based on single sample Gene Set Enrichment Analysis and generates three scores:
+
+1) stromal score (that captures the presence of stroma in tumor tissue),
+2) immune score (that represents the infiltration of immune cells in tumor tissue), and
+3) estimate score (that infers tumor purity).
+
+[Another paper](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6861210/):
+
+ESTIMATE (Estimation of STromal and Immune cells in MAlignant Tumor tissues using Expression data) is a newly developed algorithm that takes advantage of the unique properties of the transcriptional profiles of cancer tissues to infer tumor cellularity as well as the different infiltrating normal cells (17). The algorithm imputes stromal and immune scores to predict the level of infiltrating stromal and immune cells based on specific gene expression signatures of stromal and immune cells.
+
+A “stromal signature” was designed to capture the presence of stromal cells in tumor tissue, and an “immune signature” was aimed to represent the infiltration of immune cells in tumor tissue. Each signature used for the current estimation contained all of the 141 genes proposed (Supplementary Table 1). Based on these two signatures, stromal scores and immune scores were generated to reflect the presence of stromal and immune cells, respectively, and these were combined to represent a measurement of tumor purity by using single-sample gene set-enrichment analysis (ssGSEA) (23, 24). The stromal score for the analyzed cohort ranged from −1919.07 to 2064.31, and immune score was distributed between −1112.53 and 3168.56; in general, patients yielded a higher immune score than stromal score in the entire cohort
+
+```{r estimate,warning=F, message=F,fig.show = 'hold', fig.width=18, fig.height=10, eval=TRUE}
+# Load per tissue and run ESTIMATE
+tissues <- c("melanoma", "gastric", "bladder", "rcc")
+
+res<- sapply(tissues, function(x) calculateEstimateScore(antiPDL1publicIntermediateData,vst.batch.dataset.RData,paste0(antiPDL1publicIntermediateData,"purity/"),x))
+
+estimateDFs<- sapply(tissues, function(x) readEstimateFiles(paste0(antiPDL1publicIntermediateData,"purity/"),x), simplify = FALSE)
+# Merge them
+estimateDFs.merged <- bind_rows(estimateDFs)
+```
+
+```{r mergewithMeta,warning=F, message=F,fig.show = 'hold', fig.width=18, fig.height=10, eval=TRUE}
+
+# the first two bytes are the Byte Order Mark- need to handle that
+estimateDFs.merged$run_accession <-gsub("^X*", "", estimateDFs.merged$run_accession,
+        ignore.case=FALSE)
+
+
+dim(samples_all.merged)
+dim(estimateDFs.merged)
+diffAccs <-setdiff(estimateDFs.merged$run_accession, samples_all.merged$run_accession)
+length(diffAccs)
+samples_all.merged %>% dplyr::filter(run_accession %in% diffAccs)
+estimateDFs.merged %>% dplyr::filter(run_accession %in% diffAccs)
+samples_meta <- merge(estimateDFs.merged,samples_all.merged, by="run_accession", all=TRUE )
+dim(samples_meta)
+```
+
+```{r mergewithCIBER,warning=F, message=F,fig.show = 'hold', fig.width=18, fig.height=10, eval=TRUE}
+# Merge with absolute
+samples_meta.Abs <- merge(samples_meta, resCiber_Abs.df,by.x="run_accession",by.y ="sampleID" , all=TRUE )
+dim(samples_meta.Abs)
+
+# Merge with relative
+samples_meta.Rel <- merge(samples_meta, resCiber_Rel.df,by.x="run_accession",by.y ="sampleID" , all=TRUE )
+dim(samples_meta.Rel)
+
+# Save
+save(samples_meta.Abs,file=paste0(antiPDL1publicIntermediateData,"samples.aPD1.estimate.CIBER.ABS",Rdata.suffix))
+save(samples_meta.Rel,file=paste0(antiPDL1publicIntermediateData,"samples.aPD1.estimate.CIBER.REL",Rdata.suffix))
+```
+
+```{r ,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+#Calculate Tumor Purity
+samples_meta.Abs$TumorPurity <- cos(0.6049872018+0.0001467884*samples_meta.Abs$ESTIMATEScore)
+```
+
+
+## Cibersort infiltration vs estimate scores {.tabset .tabset-fade .tabset-pills}
+
+We will use the compact populations of CD4 and CD8, in absolute mode.
+
+```{r ,warning=F, message=F,fig.show = 'hold', fig.width=14, fig.height=12, eval=TRUE}
+# Merge with absolute
+absCompact <- absCompact %>% rownames_to_column(var="run_accession")
+samples_meta.Abs.compact <- merge(samples_meta, absCompact ,by="run_accession", all=TRUE )
+dim(samples_meta.Abs.compact)
+
+# Save
+save(samples_meta.Abs.compact,file=paste0(antiPDL1publicIntermediateData,"samples.aPD1.estimate.CIBER.ABS.compact",Rdata.suffix))
+```
+
+```{r ,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+#Calculate Tumor Purity
+samples_meta.Abs.compact$TumorPurity <- cos(0.6049872018+0.0001467884*samples_meta.Abs.compact$ESTIMATEScore)
+tissues <-unique(samples_meta.Abs.compact$tissue)
+tissues <- tissues[c(3,2,1,4)]
+```
+
+# Session
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+# Cleanup
+unlink(paste0('MANIFEST.txt'))
+unlink(paste0('CIBERSORT-Results.txt'))
+# Session
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"B_01_aPD1_data_count_deconvolution_processing.txt"))
+
+sessionInfo()
+
+```

@@ -1,0 +1,1410 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center> TCGA data preparation</center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 9 October 2019. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 6
+    number_sections: true
+    #df_print: paged
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1')
+unlink("scripts/main/A_06_tcga_clinical_biomarker_metadata_cache", recursive = TRUE)
+```
+
+
+
+```{r,warning=F, message=F}
+#####################
+### Load packages ###
+#####################
+library(pacman)
+pacman::p_load(DT, dplyr,readxl,TCGAbiolinks,splitstackshape,RTCGA,stringr,tibble,
+               VennDiagram, randomcoloR, Amelia, mlbench, hrbrthemes, ggpubr, superheat, estimate,extrafont,TCGAbiolinks,ggvenn,
+               data.table)
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+# Output
+projectOutDataPath <- paste0("output/data_files/")
+tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+
+######################################
+## Create intermediate output paths ##
+######################################
+if (!dir.exists(paste0(tcgaIntermediateData,"purity/"))) {dir.create(paste0(tcgaIntermediateData,"purity/"))}
+
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"tcgaReplicateFilter.R"), local=T)
+source(paste0(scriptsFunctionsPath,"tcga_clinical_biomarker_metadata_functions.R"), local=T)
+
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+
+########################
+### Script variables ###
+########################
+run_clean <- TRUE
+```
+
+
+
+
+# Load data {.tabset .tabset-fade .tabset-pills}
+
+Loading basic data objects and files for analysis.
+
+## Reference data
+
+```{r,warning=F, message=F}
+geneid2symb <- read.table(file.path(paste0(referenceInputData, "genID2name.csv")), header = TRUE, sep = ",")
+geneid2symb$gene_id <- as.character(geneid2symb$gene_id)
+geneid2symb$gene_name <- as.character(geneid2symb$gene_name)
+```
+
+## Gene expression signatures
+
+TIS-GEP, TuTack, TLS (Johnsson paper) signatures.
+
+```{r,warning=F, message=F}
+## Immune Gene signatures
+gep_weights_df <- read.table(paste0(otherInputData,"Tcell_inflamed_gep_weights.txt"), header = TRUE, sep = "\t" )
+normalization_genes_df <- read.table(paste0(otherInputData,"normalization_genes.txt"), header = TRUE, sep = "\t" )
+
+# Load TuTack gene signature
+TuTACK.DF <-loadRData(paste0(otherInputData,"TuTack_signature_weights",Rdata.suffix))
+# Load tls signature
+tls_df <- read.table(paste0(otherInputData,"tls_genes.txt"), header = TRUE, sep = "\t" )
+
+```
+
+## Non filtered nonduplicated RNA TCGA sample data, including added molecular subtypes
+
+```{r,warning=F, message=F}
+###############
+## TCGA DATA ##
+###############
+
+### Load non filtered nonduplicated RNA TCGA sample data, including added molecular subtypes
+biospecimen.tpnt.rna.merged.cl.f<-loadRData(paste0(tcgaIntermediateData,"biospecimen.merged.tpnt.RNA.noDup.sub.RData"))
+# contains aliquot, analyte, patient, sample barcode
+
+```
+
+## Other TCGA data from publications
+
+```{r,warning=F, message=F}
+## TMB data
+tmbDf <- read.table(paste0(tcgaInputData,"mutation-load_updated.txt"),sep="\t",header=T, stringsAsFactors=F,check.names=F)
+colnames(tmbDf) <- gsub(" ", "_",colnames(tmbDf) )
+colnames(tmbDf) <- gsub("-", "_",colnames(tmbDf) )
+# contains patient, sample barcode
+
+
+## ORR data
+orrDf <- read_excel(paste0(otherInputData,"ORR_TMB_table.xlsx"),sheet = 2)  
+orrDf <- as.data.frame(orrDf[,c(1:4,9:10)])
+colnames(orrDf) <- c("TCGA_ca", "PD1L1_responders","PD1L1_totalTreated", "ORR", "project","Additional_info")
+# Select only lines with complete info in first 5 columns
+orrDf_final <- orrDf[complete.cases(orrDf[,1:5]),]
+# Change name for COAD MSI &MSS
+orrDf_final$project[7:8] <- c("COAD_MSI", "COAD_MSS")
+# only info for cohort
+
+## MiTCR data
+mitcrDf <- read.table(paste0(tcgaInputData, "samples_tcr_mitcr.txt"),sep="\t",header=T, stringsAsFactors=F,check.names=F)
+mitcrDf$chain <- apply(mitcrDf[,c("V_segments","V_alleles","J_segments","J_alleles")],1, function(x) paste(x,collapse = " "))
+
+mitcrDf$chain <- ifelse(grepl("TRA",mitcrDf$chain),"alpha",ifelse(grepl("TRB",mitcrDf$chain),"beta",ifelse(grepl("TRG",mitcrDf$chain),"gamma",ifelse(grepl("TRD",mitcrDf$chain),"delta",NA))))
+# contains aliquot barcode
+
+
+mitcrClonesDf <- plyr::count(mitcrDf, c("Sample_ID", "chain"))
+colnames(mitcrClonesDf)[3] <- "NumClones"
+
+## Try with ImmPancer new mitcr file found
+# Load excel file
+mitcrDf2 <- read_excel(paste0(tcgaInputData,"1-s2.0-S1074761318301213-mmc2.xlsx"),na = "NA")
+colnames(mitcrDf2) <- gsub(" ","_",colnames(mitcrDf2))
+colnames(mitcrDf2) <- gsub("\\...","_",colnames(mitcrDf2))
+# contains patient barcode
+
+
+## Participant metadata
+participDf <- read.table(paste0(tcgaInputData,"participant.tsv"),sep="\t",header=T,stringsAsFactors=F,check.names=F)
+participDf$sample_id2 <- sub('.*\\/', '', participDf$sample_id)
+participDf$sample_id2 <- sub('\\..*', '', participDf$sample_id2)
+# contains aliquot barcode
+
+
+## Danaher immune infiltration data
+### Danaher does not include results for UCEC!!!!-CHECK CIBERSORT
+danaherImmInfDf <-read.table(paste0(tcgaInputData, "tcga_danaher.csv"),sep=",",header=T, stringsAsFactors=F,check.names=F)
+colnames(danaherImmInfDf)[1] <- "Sample_ID"
+danaherImmInfDf$Sample_ID <- gsub("\\.","-",danaherImmInfDf$Sample_ID)
+# contains aliquot  barcode
+
+## Cibersort data
+
+## Clinical Survival data
+# Load clinical data for tcga samples
+#loading Clinical data https://gdc.cancer.gov/about-data/publications/PanCan-Clinical-2018
+clinDf <- read.table(paste0(tcgaInputData,"TCGA-CDR-SupplementalTableS1_sheet.txt"),sep="\t",header=T, stringsAsFactors=F,check.names=F,comment.char="@")
+# contains a patient barcode
+
+## TCGA Tumor Purity - EVENTUALLY I CALCULATE MYSELF
+tumorPurity <- read_excel(paste0(tcgaInputData,"41467_2015_BFncomms9971_MOESM1236_ESM.xlsx"),na = "NA",skip=3)
+# dim(tumorPurity)
+# unique(tumorPurity$`Cancer type`) %>% length()
+tumorPurity <- tumorPurity[,1:3]
+```
+
+# Estimate tumor purity
+
+Run once since takes a lot of time. To run again, set run_clean to TRUE
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=12}
+
+if(isTRUE(run_clean)){
+  #####################################
+  #####################################
+  # Load per tissue and run ESTIMATE
+  tcga_projects <-TCGAbiolinks:::getGDCprojects()$project_id
+  mycancertypes.off <- tcga_projects[grepl("^TCGA-",tcga_projects)] # total 33
+  
+  res<- sapply(mycancertypes.off, function(x) calculateEstimateScore(paste0(tcgaInputData, "htseq_vst/"),"_RNASeqCountsVST.RData",paste0(tcgaIntermediateData,"purity/"),paste0(x),geneid2symb=geneid2symb))
+  # # Just using the counts
+  
+  estimateDFs<- sapply(mycancertypes.off, function(x) readEstimateFiles(paste0(tcgaIntermediateData,"purity/"),x), simplify = FALSE)
+  # estimateDFs.filt <- estimateDFs[-2]
+  # Remove empty dataframes
+  estimateDFs.filt <- Filter(function(x) !is.null(x), estimateDFs)
+  # Merge into one dataframe
+  estimateDFs.merged <- bind_rows(estimateDFs.filt)
+  
+  ## Select primary solid tumor codes
+  estimateDFs.merged.tp <- subset(estimateDFs.merged,substr(estimateDFs.merged$run_accession,14,15) == "01")
+  
+  tumorPurityEstimate <- estimateDFs.merged.tp
+  ## CALCULATE TUMOR PURITY
+  tumorPurityEstimate$TumorPurity <- cos(0.6049872018+0.0001467884*tumorPurityEstimate$ESTIMATEScore)
+  # Fix sample id
+  tumorPurityEstimate$bcr_patient_barcode <- substr(tumorPurityEstimate$run_accession,1,12)
+  tumorPurityEstimate$bcr_patient_barcode <- gsub(".", "-", tumorPurityEstimate$bcr_patient_barcode, fixed = TRUE)
+  tumorPurityEstimate$run_accession <- gsub(".", "-", tumorPurityEstimate$run_accession, fixed = TRUE)
+  
+  # Save data
+  save(tumorPurityEstimate, file=paste0(tcgaIntermediateData,"TCGA_estimateDF.notFiltered",Rdata.suffix))
+}else{
+  if(isTRUE(file.exists(paste0(tcgaIntermediateData,"TCGA_estimateDF.notFiltered",Rdata.suffix)))){
+    tumorPurityEstimate <- loadRData(paste0(tcgaIntermediateData,"TCGA_estimateDF.notFiltered",Rdata.suffix))
+  }else{
+    print("There is no file with estimated tumor purity, set run_clean to True to calculate tumor purity for TCGA samples.")
+  }
+}
+
+
+```
+
+# Filter data for non duplicated TCGA samples
+
+Make sure all files including the TCGA cohorts are uniform, same names:
+
+* COAD.MSS : COAD_MSS
+* COAD.MSI_High: COAD_MSI
+* COAD.MSI_Low: COAD_MSI_low
+* BRCA.TripleNegative : BRCA_TN
+* BRCA.Her2: BRCA_Her2
+* BRCA.LuminalA : BRCA_LuminalA
+* BRCA.LuminalB :BRCA_LuminalB
+* BRCA.Normal: BRCA_Normal
+
+
+```{r,warning=F, message=F}
+# ## In biοspecimen DF
+biospecimen.tpnt.rna.merged.cl.f <-tcga_cohortTypesCorrection(biospecimen.tpnt.rna.merged.cl.f,"type")
+
+## TMB data--NOT NEEDED
+tmbDf <-tcga_cohortTypesCorrection(tmbDf,"Cohort")
+
+## ORR data
+orrDf_final<-tcga_cohortTypesCorrection(orrDf_final,"project")
+
+## MiTCR data--NOT NEEDED
+mitcrDf2 <-tcga_cohortTypesCorrection(mitcrDf2,"TCGA_Study")
+
+## Participant metadata--NOT NEEDED
+participDf <-tcga_cohortTypesCorrection(participDf,"disease")
+
+## Danaher immune infiltration data--NOT NEEDED
+### Danaher does not include results for UCEC!!!!-CHECK CIBERSORT
+danaherImmInfDf <-tcga_cohortTypesCorrection(danaherImmInfDf,"tcga.dataset")
+
+## Cibersort data
+
+## Clinical Survival data--NOT NEEDED
+clinDf <-tcga_cohortTypesCorrection(clinDf,"type")
+
+# Tumor purity
+tumorPurity <- tcga_cohortTypesCorrection(tumorPurity,"Cancer type")
+
+```
+
+We check the Tissue Source site Codes for the different data we have above, to see if they have common codes.
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospTSS <- levels(as.factor(substr(biospecimen.tpnt.rna.merged.cl.f$bcr_patient_barcode,6,7)))
+tmbTSS <-levels(as.factor(substr(tmbDf$Patient_ID,6,7)))
+mitcrImmTSS <-levels(as.factor(substr(mitcrDf2$TCGA_Participant_Barcode,6,7)))
+mitcrClonesTSS <-levels(as.factor(substr(mitcrClonesDf$Sample_ID,6,7)))
+danaherTSS <-levels(as.factor(substr(danaherImmInfDf$Sample_ID,6,7)))
+survTSS <-levels(as.factor(substr(clinDf$bcr_patient_barcode,6,7)))
+participTSS <-levels(as.factor(substr(participDf$`entity:participant_id`,6,7)))
+tumorPurityTSS <- levels(as.factor(substr(tumorPurityEstimate$run_accession,6,7)))
+```
+
+```{r,warning=F, message=F,error=F,echo=F,fig.show = 'hold',results = FALSE}
+# colors
+set.seed(1234)
+palette <- distinctColorPalette(5)
+
+vinput1 <- list(Biospecimen=biospTSS, 
+               TMB=tmbTSS, 
+               # MiTCRimm=mitcrImmTSS, 
+               MiTCRclones=mitcrClonesTSS, 
+               Danaher=danaherTSS, 
+               Survival=survTSS#,
+               #Purity = tumorPurityTSS
+               )
+
+
+vp <-invisible(venn.diagram(vinput1, 
+                   alpha = 0.6, filename = NULL,lty = "blank", fill = palette,
+                   main= "",
+                   main.cex = 1.1,
+                   main.fontfamily="sans",
+                   fontfamily ="sans",
+                   sub.fontfamily = "sans",
+                   cat.fontfamily = "sans",disable.logging = TRUE, output=FALSE
+
+));
+
+grid.newpage()
+grid.draw(vp)
+```
+
+```{r,warning=F, message=F,error=F,echo=F,fig.show = 'hold',results = FALSE}
+# colors
+set.seed(1234)
+palette <- distinctColorPalette(5)
+
+vinput1 <- list(Biospecimen=biospTSS, 
+               TMB=tmbTSS, 
+               # MiTCRimm=mitcrImmTSS, 
+               MiTCRclones=mitcrClonesTSS, 
+               Danaher=danaherTSS, 
+               # Survival=survTSS#,
+               Purity = tumorPurityTSS
+               )
+
+
+vp <- invisible(venn.diagram(vinput1, 
+                   alpha = 0.6, filename = NULL,lty = "blank", fill = palette,
+                   main= "",
+                   main.cex = 1.1,
+                   main.fontfamily="sans",
+                   fontfamily ="sans",
+                   sub.fontfamily = "sans",
+                   cat.fontfamily = "sans",disable.logging = TRUE, output=FALSE
+
+));
+
+grid.newpage()
+grid.draw(vp)
+```
+
+
+```{r,warning=F, message=F,error=F,echo=F,fig.show = 'hold',results = FALSE}
+# colors
+set.seed(1234)
+palette <- distinctColorPalette(5)
+
+vinput2 <- list(Biospecimen=biospTSS, 
+               TMB=tmbTSS, 
+               MiTCRimm=mitcrImmTSS, 
+               # MiTCRclones=mitcrClonesTSS, 
+               Danaher=danaherTSS, 
+               Survival=survTSS)
+
+vp <- invisible(venn.diagram(vinput2, 
+                   alpha = 0.6, filename = NULL,lty = "blank", fill = palette,
+                   main= "",
+                   main.cex = 1.1,
+                   main.fontfamily="sans",
+                   fontfamily ="sans",
+                   sub.fontfamily = "sans",
+                   cat.fontfamily = "sans",disable.logging = TRUE, output=FALSE
+
+));
+
+grid.newpage()
+grid.draw(vp)
+```
+
+```{r,warning=F, message=F,error=F,echo=F,fig.show = 'hold',results = FALSE}
+# colors
+set.seed(1234)
+palette <- distinctColorPalette(5)
+
+vinput3 <- list(Biospecimen=biospTSS, 
+               TMB=tmbTSS, 
+               MiTCRimm=mitcrImmTSS, 
+               MiTCRclones=mitcrClonesTSS, 
+               # Danaher=danaherTSS, 
+               Survival=survTSS)
+
+vp <- invisible(venn.diagram(vinput3, 
+                   alpha = 0.6, filename = NULL,lty = "blank", fill = palette,
+                   main= "",
+                   main.cex = 1.1,
+                   main.fontfamily="sans",
+                   fontfamily ="sans",
+                   sub.fontfamily = "sans",
+                   cat.fontfamily = "sans",disable.logging = TRUE, output=FALSE
+
+));
+
+grid.newpage()
+grid.draw(vp)
+```
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+# colors
+set.seed(1234)
+palette <- distinctColorPalette(2)
+
+vinput4 <- list(#Biospecimen=biospTSS, 
+               #TMB=tmbTSS, 
+               MiTCRimm=mitcrImmTSS, 
+               MiTCRclones=mitcrClonesTSS 
+               # Danaher=danaherTSS, 
+               #Survival=survTSS
+               )
+
+vp <- invisible(venn.diagram(vinput4, 
+                   alpha = 0.6, filename = NULL,lty = "blank", fill = palette,
+                   main= "",
+                   main.cex = 1.1,
+                   main.fontfamily="sans",
+                   fontfamily ="sans",
+                   sub.fontfamily = "sans",
+                   cat.fontfamily = "sans",disable.logging = TRUE, output=FALSE
+
+));
+
+grid.newpage()
+grid.draw(vp)
+```
+
+Loading TCGA project names
+```{r,warning=F, message=F,fig.show = 'hold'}
+
+# TCGA projects
+# Find TCGA projects
+tcga_projects <-TCGAbiolinks:::getGDCprojects()$project_id
+mycancertypes.tcgaBiolinks <- tcga_projects[grepl("^TCGA-",tcga_projects)] # total 33
+mycancertypes.tcgaBiolinks.ord <- mycancertypes.tcgaBiolinks[order(mycancertypes.tcgaBiolinks)]
+#list of tumor types from biospecimen data:
+mycancertypes.tcgaBiolinks.ord.clean <- gsub("TCGA-","",mycancertypes.tcgaBiolinks.ord)
+
+#####################
+## SELECT PROJECTS ##
+#####################
+# ## Exclude THYM and DLBC
+
+
+```
+
+Important to note that we have removed the THYM and DLBC tcga datasets. A rationale explanation of that is that these are "immune cell tumors" that do not fit our classification, as explained by Danaher et al. "the 3 cancers in TCGA arising from "immune" cells, i.e., thymoma, acute myeloid leukemia (AML), and diffuse large B-cell lymphoma (DLBC), all display expression patterns consistent with an effect of tumor type on the algorithm".
+
+In addition we have added BRCA Triple Negative as a distinct subset of BRCA and we split COAD to COAD MSI (MSI high) and COAD MSS.
+
+# Load biospecimen, HTSEQ-VST normalized and RSEM TCGA data
+
+Load TCGA sample data
+```{r,warning=F, message=F,fig.show = 'hold'}
+# Assign tumor samples and normal samples
+tcga_TP <- biospecimen.tpnt.rna.merged.cl.f[biospecimen.tpnt.rna.merged.cl.f$sample_type=="TP",] #selecting tumors
+tcga_NT <- biospecimen.tpnt.rna.merged.cl.f[biospecimen.tpnt.rna.merged.cl.f$sample_type=="NT",] #selecting normal tissue
+
+#list of tumor types from biospecimen data:
+mycancertypes.biosp.molSubtypes <- unique(tcga_TP$type)
+mycancertypes.biosp.molSubtypes.ord <- mycancertypes.biosp.molSubtypes[order(mycancertypes.biosp.molSubtypes)]
+
+#####################
+## SELECT PROJECTS ##
+#####################
+# ## Exclude THYM and DLBC
+# Setting the cancertypes for orr data as well
+mycancertypes.orr <- mycancertypes.biosp.molSubtypes.ord
+
+# Let's summarize the TCGA biospecimen data we just loaded
+# Number of patients per project
+biospecimen.tpnt.rna.merged.patient.sub.table <-biospecimen.tpnt.rna.merged.cl.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tpnt.rna.merged.aliq.sub.table <- biospecimen.tpnt.rna.merged.cl.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.tpnt.rna.merged.aliqPatient.sub.table <-biospecimen.tpnt.rna.merged.cl.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+```
+
+
+**Summary Tables of TCGA biospecimen data**
+
+***
+
+```{r, eval = TRUE}
+
+datatable(biospecimen.tpnt.rna.merged.patient.sub.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy & harmonized)'
+)
+```
+
+```{r, eval = TRUE}
+
+datatable(biospecimen.tpnt.rna.merged.aliq.sub.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (legacy & harmonized)'
+)
+```
+
+```{r, eval = TRUE}
+
+datatable(biospecimen.tpnt.rna.merged.aliqPatient.sub.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of replicate aliquots per patient per project (legacy & harmonized)'
+)
+```
+
+## Calulcate TIS-GEP and TuTack signature scores
+
+From the last table we can still see that there are several replicates for many patients. Eventually after merging with the expression data, we will filter the TCGA barcodes and end up with one aliquot per patient.
+
+Load TCGA RNA HTSEQ-FPKM-UQ data for all cancers and calculate the signature scores for Expanded immune signature, IFNG (small, 6 genes),  T cell-inflamed GEP (18 genes),the HTSEQ-VST data to calculate our "TuTACK" gene signature and the VST normalized PD-L1 expression.
+
+```{r,warning=F, message=F, echo=FALSE, results='hide',fig.show = 'hold'}
+rownames(TuTACK.DF)<- str_replace(rownames(TuTACK.DF),"_","-")
+TuTACK.DF$genes <- str_replace(TuTACK.DF$genes,"_","-")
+TuTACK <- TuTACK.DF$genes
+TuTACK_ensemble <- TuTACK.DF$ensemble
+###############################################################
+gene_signatures_rna <- data.frame(Sample_ID=character(),
+tcga.dataset = character(),
+IFNg_expanded_sigscore = numeric(),
+IFNg_small_sigscore = numeric(),
+TuTACK_sigscore = numeric(),
+PD_L1 = numeric(),
+TLS_score = numeric(),
+stringsAsFactors=FALSE)
+
+htseq_files <-list.files(path = paste0(tcgaInputData, "htseq_fpkm_uq/"), pattern = "_RNASeqFPKM_UQ.RData", all.files = FALSE,
+full.names = FALSE, recursive = FALSE,
+ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
+mycancertypes.htseq <- sub("_RNASeqFPKM_UQ.RData","",htseq_files)
+
+
+# Get Ayers & TuTAck signature scores
+# gene_signatures_rna <- sapply(mycancertypes.htseq,function(x) load_tcga_rna_add_signatureScore(selectedcancer=x,gene_signatures_rna, TuTACK_ensemble,gene_data_kal,paste0(tcgaInputData, "htseq_fpkm_uq/"),paste0(tcgaInputData, "htseq_vst/")),simplify = FALSE)
+
+gene_signatures_rna <- sapply(mycancertypes.htseq,function(x) load_tcga_rna_add_signatureScore(selectedcancer=x,gene_signatures_rna, TuTACK_ensemble,tls_df,paste0(tcgaInputData, "htseq_fpkm_uq/"),paste0(tcgaInputData, "htseq_vst/")),simplify = FALSE)
+  
+###################################################
+# Merge data
+gene_signatures_rna  <-bind_rows(gene_signatures_rna , .id = "column_label")
+colnames(gene_signatures_rna)[3] <- "tcga.dataset"
+
+print("Number of aliquots in HTSEQ data")
+dim(gene_signatures_rna)#9760
+# Number of  unique patients
+print("Number of unique patients in HTSEQ data")
+length(unique(substr(gene_signatures_rna$Sample_ID,1,12)))#9679
+
+```
+
+Load the Level 3 RSEM-normalized RNASeqV2 data from TCGA
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+
+# reading data
+list.files( paste0(tcgaInputData, "rsem/")) %>% 
+  file.path( paste0(tcgaInputData, "rsem/"), .) -> folder
+
+folder %>%
+  list.files %>%
+  file.path( folder, .) %>%
+  grep( pattern = 'illuminahiseq', x = ., value = TRUE) -> pathRNA
+
+dataNames<- gsub(paste0(paste0(tcgaInputData, "rsem//"),"gdac.broadinstitute.org_"),"",pathRNA)
+# str_remove(pathRNA,paste0(paste0(tcgaIntermediateData, "rsem//"),"gdac.broadinstitute.org_"))
+
+dataNames<- unlist(lapply(strsplit(dataNames,".Merge_rnaseqv2"), `[[`, 1))
+names(pathRNA) <- dataNames
+```
+
+Get datasets for all TCGA and calculate TIS score
+
+```{r,warning=F, message=F}
+if(isTRUE(run_clean)){
+    gene_TISsignature_rna <- data.frame(Sample_ID=character(),
+                                    tcga.dataset = character(),
+                                    TIS_sigscore = numeric(),
+                                    stringsAsFactors=FALSE)
+
+
+
+  gene_TISsignature_rna <- sapply(mycancertypes.tcgaBiolinks.ord.clean,function(x) get_TIS_score_tcga_rsem(selectedcancer=x,gene_TISsignature_rna,gep_weights_df,normalization_genes_df),simplify = FALSE)
+  
+  
+  # sapply(gene_TISsignature_rna, function(x) median(x[["TIS_sigscore"]]))
+  # Merge data
+  gene_TISsignature_rna  <-bind_rows(gene_TISsignature_rna , .id = "column_label")
+  
+  
+  median(gene_TISsignature_rna$TIS_sigscore)
+  
+  # Save and don't run above each time
+  save(gene_TISsignature_rna,file=paste0(tcgaIntermediateData,"gene_TISsignature_rna", Rdata.suffix))
+  ##IMPORTANT!!: Select only primary solid tumor samples
+  gene_TISsignature_rna_TP <- subset(gene_TISsignature_rna,substr(gene_TISsignature_rna$Sample_ID,14,15) == "01")
+  # Histogram of TIS scores
+  hist(gene_TISsignature_rna_TP$TIS_sigscore)
+  ## CHECK
+  print("Number of aliquots in RSEM Primary Tumor data")
+  dim(gene_TISsignature_rna_TP)#9101
+  # Number of  unique patients
+  print("Number of unique patients in RSEM Primary Tumor data")
+  length(unique(substr(gene_TISsignature_rna_TP$Sample_ID,1,12)))#9101
+  
+}else{
+  if(isTRUE(file.exists(paste0(tcgaIntermediateData,"gene_TISsignature_rna", Rdata.suffix)))){
+    gene_TISsignature_rna  <-loadRData(paste0(tcgaIntermediateData,"gene_TISsignature_rna", Rdata.suffix))
+    ##IMPORTANT!!: Select only primary solid tumor samples
+  gene_TISsignature_rna_TP <- subset(gene_TISsignature_rna,substr(gene_TISsignature_rna$Sample_ID,14,15) == "01")
+  # Histogram of TIS scores
+  hist(gene_TISsignature_rna_TP$TIS_sigscore)
+  ## CHECK
+  print("Number of aliquots in RSEM Primary Tumor data")
+  dim(gene_TISsignature_rna_TP)#9101
+  # Number of  unique patients
+  print("Number of unique patients in RSEM Primary Tumor data")
+  length(unique(substr(gene_TISsignature_rna_TP$Sample_ID,1,12)))#9101
+    
+  }else{
+    print("There is no file with calculated TIS signatures, set run_clean to True to calculate TIS signature scores for TCGA samples.")
+  }
+}
+
+
+```
+
+The barcode missing (missing_barcodes) is a weird case, since when we look it up on [GDC portal](https://portal.gdc.cancer.gov/cases/9e18238f-ae85-4b75-ae87-d92da9731a40) it is annotated as a Recurrent Tumor, though in the barcode the sample type ID is 01 -which should be 02 for recurrent tumor.
+
+We decide to exclude this barcode, since we do not know whether it is correct or not. Based on GDC portal it is a recurrent tumor, so it should be excluded. Also, by looking at the _merged_sample_quality_annotations.tsv_ file of the [PanCanAtlas initiative](https://gdc.cancer.gov/about-data/publications/pancanatlas) this aliquot is noted as: "Notification:Item in special subset:This is part of the ovarian triplet set." AND "Notification:Item is noncanonical:Ovarian Triplet. Sample TCGA-23-1023-01R is a recurrent sample that for historical reasons has retained the -01R designation rather than the conventional -02R designation used elsewhere in TCGA." It's not noted as a "do not use sample", but based on sample type id, it does not fit the requirements for the current analysis.
+
+
+# MERGE ALL DATA
+
+## Filtering TCGA barcodes & fixing data columns 
+
+First rename column of aliquots so we can merge by one column, and transform data to have common columns with:
+
+* project (BRCA, ACC)
+* tcga.dataset (TCGA-BRCA, TCGA-ACC)
+* bcr_aliquot_barcode#1:28
+* bcr_analyte_barcode#1:20
+* bcr_sample_barcode#1:16
+* bcr_patient_barcode#1:12
+
+We also need to add to all data apart from biospecimen the BRCA_Her2, BRCA_Luminal, BRCA_LuminalB,BRCA_Normal,BRCA_TN,COAD_MSI,COAD_MSI_low,COAD_MSS  (so duplicate samples will exist)
+
+For some patients we have multiple samples, multiple vials etc. Multiple samples can exist because there are samples from primary solid tumors, solid tissue normal etc..
+
+For tumor we only consider:
+
+* Primary solid Tumor - 01
+* (Recurrent Solid Tumor) -02
+* (Additional - New Primary) - 05
+* (Metastatic) -06
+* (Additional Metastatic) -07
+
+```{r,warning=F, message=F,echo=FALSE, results=FALSE,fig.show = 'hold', eval=TRUE}
+filterTcgaBarcodes <- function(df,col){
+  col.un <- as.name(col)
+  df.barcodes <- tcga_replicateFilter(df[[col]] , analyte_target = "RNA",filter_FFPE=TRUE, full_barcode=TRUE)
+  # length(tcga.tp.barcodes)
+  # Subset to filtered barcodes
+  df.final <- df %>% dplyr::filter(!!col.un %in% df.barcodes) %>% 
+                                      distinct() %>% droplevels()
+  df.final
+}
+
+# bcr_aliquot_barcode#1:28
+# bcr_analyte_barcode#1:20
+# bcr_sample_barcode#1:16
+# bcr_patient_barcode#1:12
+# project
+# tcga.dataset
+####
+
+## BIOSPECIMEN DATA
+biospecimen.tpnt.rna.merged.cl.f.sub <- biospecimen.tpnt.rna.merged.cl.f %>% dplyr::filter(sample_type=="TP")
+colnames(biospecimen.tpnt.rna.merged.cl.f.sub)[1] <- c("tcga.dataset")
+biospecimen.tpnt.rna.merged.cl.f.sub$project <-biospecimen.tpnt.rna.merged.cl.f.sub$type
+biospecimen.tpnt.rna.merged.cl.f.sub$tcga.dataset<- paste0("TCGA-",biospecimen.tpnt.rna.merged.cl.f.sub$project)
+
+biospecimen.tpnt.rna.merged.cl.f.sub <- biospecimen.tpnt.rna.merged.cl.f.sub %>% select(bcr_aliquot_barcode,
+                                                              bcr_analyte_barcode,
+                                                              bcr_sample_barcode,
+                                                              bcr_patient_barcode,
+                                                              project,
+                                                              tcga.dataset,
+                                                              sample_type_id,
+                                                              sample_type,
+                                                              analyte_type_id,
+                                                              MSI_status) %>% distinct() %>% droplevels()
+
+
+# Check duplicates
+biospecimen.tpnt.rna.merged.cl.f.sub %>% dplyr:: filter(bcr_patient_barcode %in% biospecimen.tpnt.rna.merged.cl.f.sub$bcr_patient_barcode[which(duplicated(biospecimen.tpnt.rna.merged.cl.f.sub$bcr_patient_barcode))[1]])
+
+
+biospecimen.tpnt.rna.merged.cl.f.sub.f <-filterTcgaBarcodes(biospecimen.tpnt.rna.merged.cl.f.sub,"bcr_aliquot_barcode")
+
+# Check duplicate
+biospecimen.tpnt.rna.merged.cl.f.sub.f %>% dplyr:: filter(bcr_patient_barcode %in% biospecimen.tpnt.rna.merged.cl.f.sub.f$bcr_patient_barcode[which(duplicated(biospecimen.tpnt.rna.merged.cl.f.sub.f$bcr_patient_barcode))[2]])
+# We have patients with multiple aliquots, we should only care for patient and project
+biospecimen.tpnt.rna.merged.cl.f.sub.f <- biospecimen.tpnt.rna.merged.cl.f.sub.f %>% select(bcr_patient_barcode, project, tcga.dataset) %>% distinct() %>% droplevels()
+
+## HERE I HAVE MULTIPLE PATIENTS WITH MULTIPLE SAMPLES
+## GENE SIGNATURES
+gene_signatures_rna.sub <- gene_signatures_rna
+colnames(gene_signatures_rna.sub)[1:2] <- c("project","bcr_aliquot_barcode")
+gene_signatures_rna.sub$project <- str_remove(gene_signatures_rna.sub$project,"TCGA-")
+gene_signatures_rna.sub$bcr_analyte_barcode <-substr(gene_signatures_rna.sub$bcr_aliquot_barcode,1,20)
+gene_signatures_rna.sub$bcr_sample_barcode <-substr(gene_signatures_rna.sub$bcr_aliquot_barcode,1,16)
+gene_signatures_rna.sub$bcr_patient_barcode <- substr(gene_signatures_rna.sub$bcr_aliquot_barcode,1,12)
+
+# Select only TP
+gene_signatures_rna.sub <-gene_signatures_rna.sub[which(substr(gene_signatures_rna.sub$bcr_aliquot_barcode,14,15)=="01"),]
+
+
+gene_signatures_rna.sub <- gene_signatures_rna.sub %>% select(bcr_aliquot_barcode,
+                                                              bcr_analyte_barcode,
+                                                              bcr_sample_barcode,
+                                                              bcr_patient_barcode,
+                                                              project,
+                                                              tcga.dataset,
+                                                              IFNg_expanded_sigscore,
+                                                              IFNg_small_sigscore,
+                                                              TuTACK_sigscore,
+                                                              PD_L1,
+                                                              TLS_score) %>% distinct() %>% droplevels()
+
+gene_signatures_rna.sub.f <-filterTcgaBarcodes(gene_signatures_rna.sub,"bcr_aliquot_barcode")
+
+# Check duplicate
+gene_signatures_rna.sub.f %>% dplyr:: filter(bcr_patient_barcode %in% gene_signatures_rna.sub.f$bcr_patient_barcode[which(duplicated(gene_signatures_rna.sub.f$bcr_patient_barcode))])
+
+# YES PATIENT WITH TWO SAMPLES
+# Since there mihgt be multiple vials for each patient, we aggregate by patient with the median of the values, BY CHAIN
+####
+# Aggregate vials/samples
+
+gene_signatures_rna.sub.f.agg <- gene_signatures_rna.sub.f %>%
+                      group_by( bcr_patient_barcode, project, tcga.dataset) %>%
+                      summarise_at(c("IFNg_expanded_sigscore", "IFNg_small_sigscore", "TuTACK_sigscore" ,"PD_L1","TLS_score"),median, na.rm=TRUE) %>%
+                      ungroup %>% distinct()
+gene_signatures_rna.sub.f.agg %>% dplyr:: filter(bcr_patient_barcode %in% gene_signatures_rna.sub.f.agg$bcr_patient_barcode[which(duplicated(gene_signatures_rna.sub.f.agg$bcr_patient_barcode))])
+
+# Check duplicate
+gene_signatures_rna.sub.f.agg %>% dplyr:: filter(bcr_patient_barcode %in% gene_signatures_rna.sub.f.agg$bcr_patient_barcode[which(duplicated(gene_signatures_rna.sub.f.agg$bcr_patient_barcode))])
+
+##########
+gene_TISsignature_rna_TP.sub <- gene_TISsignature_rna_TP
+colnames(gene_TISsignature_rna_TP.sub)[1:2] <- c("project","bcr_aliquot_barcode")
+gene_TISsignature_rna_TP.sub$tcga.dataset <- paste0("TCGA-",gene_TISsignature_rna_TP.sub$tcga.dataset)
+gene_TISsignature_rna_TP.sub$bcr_analyte_barcode <-substr(gene_TISsignature_rna_TP.sub$bcr_aliquot_barcode,1,20)
+gene_TISsignature_rna_TP.sub$bcr_sample_barcode <-substr(gene_TISsignature_rna_TP.sub$bcr_aliquot_barcode,1,16)
+gene_TISsignature_rna_TP.sub$bcr_patient_barcode <- substr(gene_TISsignature_rna_TP.sub$bcr_aliquot_barcode,1,12)
+
+gene_TISsignature_rna_TP.sub <- gene_TISsignature_rna_TP.sub %>% select(bcr_aliquot_barcode,
+                                                              bcr_analyte_barcode,
+                                                              bcr_sample_barcode,
+                                                              bcr_patient_barcode,
+                                                              project,
+                                                              tcga.dataset,
+                                                              TIS_sigscore) %>% distinct() %>% droplevels()
+
+
+
+
+gene_TISsignature_rna_TP.sub.f <-filterTcgaBarcodes(gene_TISsignature_rna_TP.sub,"bcr_aliquot_barcode")
+# Check duplicate
+gene_TISsignature_rna_TP.sub.f %>% dplyr:: filter(bcr_patient_barcode %in% gene_TISsignature_rna_TP.sub.f$bcr_patient_barcode[which(duplicated(gene_TISsignature_rna_TP.sub.f$bcr_patient_barcode))])
+
+
+gene_TISsignature_rna_TP.sub.f <- gene_TISsignature_rna_TP.sub.f %>% select(-bcr_aliquot_barcode,
+                                                              -bcr_analyte_barcode,
+                                                              -bcr_sample_barcode) %>% distinct() %>% droplevels()
+## TMB
+tmbDf.sub <- tmbDf
+colnames(tmbDf.sub)[1:3] <- c("project", "bcr_patient_barcode", "bcr_sample_barcode")
+tmbDf.sub$tcga.dataset <- paste0("TCGA-",tmbDf.sub$project)
+
+tmbDf.sub <- tmbDf.sub %>% select(bcr_sample_barcode,
+                                  bcr_patient_barcode,
+                                  project,
+                                  tcga.dataset,
+                                  Silent_per_Mb,
+                                  Non_silent_per_Mb) %>% distinct() %>% droplevels()
+tmbDf.sub$logTMB <- log(tmbDf.sub$Non_silent_per_Mb + 1)
+
+
+# Select only TP
+tmbDf.sub <-tmbDf.sub[which(substr(tmbDf.sub$bcr_sample_barcode,14,15)=="01"),]
+
+# Check duplicate
+tmbDf.sub %>% dplyr:: filter(bcr_patient_barcode %in% tmbDf.sub$bcr_patient_barcode[which(duplicated(tmbDf.sub$bcr_patient_barcode))])
+
+tmbDf.sub <-tmbDf.sub %>% select(-bcr_sample_barcode) %>% distinct()
+
+## TCR DATA
+mitcrDf2.sub <- mitcrDf2
+colnames(mitcrDf2.sub)[1:2] <- c("bcr_patient_barcode","project")
+mitcrDf2.sub$tcga.dataset <- paste0("TCGA-",mitcrDf2.sub$project)
+# It includes also survival data, need to see how to deal with that.
+otherCols <- colnames(mitcrDf2.sub)[c(3,5:32,37:64)] #  EXCLUDE OS PFI
+allCols <- c("bcr_patient_barcode","project",
+             "tcga.dataset",
+             "TCGA_Subtype",otherCols)
+mitcrDf2.sub <- mitcrDf2.sub %>% select(all_of(allCols)) %>% distinct() %>% droplevels()
+
+mitcrDf2.sub <- mitcrDf2.sub %>% select(-Eosinophils_61, -Neutrophils_60) %>% distinct() %>% droplevels()
+
+
+# Check duplicate
+mitcrDf2.sub %>% dplyr:: filter(bcr_patient_barcode %in% mitcrDf2.sub$bcr_patient_barcode[which(duplicated(mitcrDf2.sub$bcr_patient_barcode))])
+
+
+
+#mitcrDf2.sub %>% dplyr::filter(complete.cases(OS)) %>% pull(OS) %>% length()
+
+## Danaher
+danaherImmInfDf.sub <-danaherImmInfDf
+
+danaherImmInfDf.sub$project <- danaherImmInfDf.sub$tcga.dataset
+danaherImmInfDf.sub$tcga.dataset <- paste0("TCGA-",danaherImmInfDf.sub$tcga.dataset)
+colnames(danaherImmInfDf.sub)[1] <- c("bcr_aliquot_barcode")
+
+danaherImmInfDf.sub$bcr_analyte_barcode <-substr(danaherImmInfDf.sub$bcr_aliquot_barcode,1,20)
+danaherImmInfDf.sub$bcr_sample_barcode <-substr(danaherImmInfDf.sub$bcr_aliquot_barcode,1,16)
+danaherImmInfDf.sub$bcr_patient_barcode <- substr(danaherImmInfDf.sub$bcr_aliquot_barcode,1,12)
+
+otherCols <- colnames(danaherImmInfDf.sub)[c(3:16)]
+allCols <- c("bcr_aliquot_barcode",
+              "bcr_analyte_barcode",
+              "bcr_sample_barcode",
+              "bcr_patient_barcode",
+              "project",
+              "tcga.dataset",otherCols)
+danaherImmInfDf.sub <- danaherImmInfDf.sub %>% select(all_of(allCols)) %>% distinct() %>% droplevels()
+
+
+# Select only TP
+danaherImmInfDf.sub <-danaherImmInfDf.sub[which(substr(danaherImmInfDf.sub$bcr_sample_barcode,14,15)=="01"),]
+
+# Filter aliquots
+danaherImmInfDf.sub.f <-filterTcgaBarcodes(danaherImmInfDf.sub,"bcr_aliquot_barcode")
+# Check duplicate
+danaherImmInfDf.sub.f %>% dplyr:: filter(bcr_patient_barcode %in% danaherImmInfDf.sub.f$bcr_patient_barcode[which(duplicated(danaherImmInfDf.sub.f$bcr_patient_barcode))])
+# Aggregate vials/samples
+danaherImmInfDf.sub.f.agg <- danaherImmInfDf.sub.f %>%
+                      group_by( bcr_patient_barcode, project, tcga.dataset) %>%
+                      summarise_at(colnames(danaherImmInfDf.sub.f)[7:ncol(danaherImmInfDf.sub.f)],median, na.rm=TRUE) %>%
+                      ungroup %>% distinct()
+danaherImmInfDf.sub.f.agg %>% dplyr:: filter(bcr_patient_barcode %in% danaherImmInfDf.sub.f.agg$bcr_patient_barcode[which(duplicated(danaherImmInfDf.sub.f.agg$bcr_patient_barcode))])
+
+
+
+
+## Clincal DF
+clinDf.sub <- clinDf
+cols.num <- c("age_at_initial_pathologic_diagnosis",
+                             "initial_pathologic_dx_year",
+                              "birth_days_to",
+                             "last_contact_days_to",
+                             "death_days_to",
+                             "new_tumor_event_dx_days_to",
+                             "OS",
+                             "OS.time",
+                             "DSS", "DSS.time",
+                             "PFI","PFI.time")
+clinDf.sub[cols.num] <- sapply(clinDf.sub[cols.num],as.numeric)
+# Remove first column
+clinDf.sub <- clinDf.sub[,-1]
+colnames(clinDf.sub)[2] <- "project" 
+
+clinDf.sub$tcga.dataset <- paste0("TCGA-",clinDf.sub$project)
+
+otherCols <- colnames(clinDf.sub)[c(3:33)]
+allCols <- c("bcr_patient_barcode",
+              "project",
+              "tcga.dataset",otherCols)
+clinDf.sub <- clinDf.sub %>% select(all_of(allCols)) %>% distinct() %>% droplevels()
+
+# ,"age_at_initial_pathologic_diagnosis",
+#                     "gender","race","ajcc_pathologic_tumor_stage",
+#                     "birth_days_to", "vital_status", "tumor_status",
+#                     "OS", "OS.time", "DSS", "DSS.time", "DFI", "DFI.time", "PFI", "PFI.time"
+
+# Check duplicate
+clinDf.sub %>% dplyr:: filter(bcr_patient_barcode %in% clinDf.sub$bcr_patient_barcode[which(duplicated(clinDf.sub$bcr_patient_barcode))])
+
+
+
+## Participant DF
+participDf.sub <- participDf
+colnames(participDf.sub)[1:2] <- c("bcr_aliquot_barcode","project")
+
+participDf.sub$tcga.dataset <- paste0("TCGA-",participDf.sub$project)
+participDf.sub$bcr_analyte_barcode <-substr(participDf.sub$bcr_aliquot_barcode,1,20)
+participDf.sub$bcr_sample_barcode <-substr(participDf.sub$bcr_aliquot_barcode,1,16)
+participDf.sub$bcr_patient_barcode <- substr(participDf.sub$bcr_aliquot_barcode,1,12)
+
+
+participDf.sub <- participDf.sub %>% select(bcr_aliquot_barcode,
+                                            bcr_analyte_barcode,
+                                            bcr_sample_barcode,
+                                            bcr_patient_barcode,
+                                            project,
+                                            tcga.dataset,
+                                            sample_type,
+                                            disease_name) %>% distinct() %>% droplevels()
+
+# Only TP
+participDf.sub <-participDf.sub[which(substr(participDf.sub$bcr_sample_barcode,14,15)=="01"),]
+
+# Filter TCGA aliquots
+participDf.sub.f <-filterTcgaBarcodes(participDf.sub,"bcr_aliquot_barcode")
+# Check duplicate
+participDf.sub.f %>% dplyr:: filter(bcr_patient_barcode %in% participDf.sub.f$bcr_patient_barcode[which(duplicated(participDf.sub.f$bcr_patient_barcode))])
+
+# We care about disease name
+# Aggregate vials/samples
+participDf.sub.f <- participDf.sub.f %>% select(bcr_patient_barcode, project, tcga.dataset, -sample_type, disease_name) %>%
+                    distinct() %>% droplevels()
+
+
+# Check duplicate
+participDf.sub.f %>% dplyr:: filter(bcr_patient_barcode %in% participDf.sub.f$bcr_patient_barcode[which(duplicated(participDf.sub.f$bcr_patient_barcode))])
+
+
+## TUMOR PURITY
+tumorPurityEstimate.sub <- tumorPurityEstimate
+tumorPurityEstimate.sub$TumorPurity <- cos(0.6049872018+0.0001467884*tumorPurityEstimate.sub$ESTIMATEScore)
+colnames(tumorPurityEstimate.sub)[1] <-"bcr_aliquot_barcode"
+
+# tumorPurityEstimate.sub$
+# participDf.sub$tcga.dataset <- paste0("TCGA-",participDf.sub$project)
+tumorPurityEstimate.sub$bcr_analyte_barcode <-substr(tumorPurityEstimate.sub$bcr_aliquot_barcode,1,20)
+tumorPurityEstimate.sub$bcr_sample_barcode <-substr(tumorPurityEstimate.sub$bcr_aliquot_barcode,1,16)
+tumorPurityEstimate.sub$bcr_patient_barcode <- substr(tumorPurityEstimate.sub$bcr_aliquot_barcode,1,12)
+# str_before_nth(tumorPurityEstimate.sub$bcr_aliquot_barcode,"-",2)
+
+tumorPurityEstimate.sub <- tumorPurityEstimate.sub %>% select(bcr_aliquot_barcode,
+                                            bcr_analyte_barcode,
+                                            bcr_sample_barcode,
+                                            bcr_patient_barcode,
+                                            StromalScore,
+                                            ImmuneScore,
+                                            ESTIMATEScore,
+                                            TumorPurity) %>% distinct() %>% droplevels()
+
+# Only TP
+tumorPurityEstimate.sub <-tumorPurityEstimate.sub[which(substr(tumorPurityEstimate.sub$bcr_sample_barcode,14,15)=="01"),]
+
+#Filter tCGA aliquots
+tumorPurityEstimate.sub.f <-filterTcgaBarcodes(tumorPurityEstimate.sub,"bcr_aliquot_barcode")
+# Check duplicate
+tumorPurityEstimate.sub.f %>% dplyr:: filter(bcr_patient_barcode %in% tumorPurityEstimate.sub.f$bcr_patient_barcode[which(duplicated(tumorPurityEstimate.sub.f$bcr_patient_barcode))])
+# Aggregate vials/samples
+tumorPurityEstimate.sub.f.agg <- tumorPurityEstimate.sub.f %>%
+                      group_by( bcr_patient_barcode) %>%
+                      summarise_at(colnames(tumorPurityEstimate.sub.f)[5:ncol(tumorPurityEstimate.sub.f)],median, na.rm=TRUE) %>%
+                      ungroup %>% distinct()
+tumorPurityEstimate.sub.f.agg %>% dplyr:: filter(bcr_patient_barcode %in% tumorPurityEstimate.sub.f.agg$bcr_patient_barcode[which(duplicated(tumorPurityEstimate.sub.f.agg$bcr_patient_barcode))])
+
+
+
+# Check duplicate
+tumorPurityEstimate.sub.f.agg %>% dplyr:: filter(bcr_patient_barcode %in% tumorPurityEstimate.sub.f.agg$bcr_patient_barcode[which(duplicated(tumorPurityEstimate.sub.f.agg$bcr_patient_barcode))])
+
+## ORR
+orrDf_final.sub <- orrDf_final
+orrDf_final.sub$tcga.dataset <- paste0("TCGA-",orrDf_final.sub$project)
+orrDf_final.sub <- orrDf_final.sub %>% select(project,
+                                              tcga.dataset,
+                                              TCGA_ca,
+                                              PD1L1_responders,
+                                              PD1L1_totalTreated) %>% distinct() %>% droplevels()
+
+# ### OS DATA - SELECT FROM WHERE
+# mitcrDf2.sub %>% dplyr::filter(complete.cases(OS)) %>% pull(OS) %>% length()
+# which(complete.cases(clinDf.sub$OS)) %>% length()
+patientProject.DF <-rbind(biospecimen.tpnt.rna.merged.cl.f.sub %>% select(bcr_patient_barcode, project, tcga.dataset),
+      clinDf.sub %>% select(bcr_patient_barcode, project, tcga.dataset),
+      participDf.sub %>% select(bcr_patient_barcode, project, tcga.dataset),
+      mitcrDf2.sub %>% select(bcr_patient_barcode, project, tcga.dataset),
+      danaherImmInfDf.sub %>% select(bcr_patient_barcode, project, tcga.dataset),
+      gene_TISsignature_rna_TP.sub %>% select(bcr_patient_barcode, project, tcga.dataset),
+      gene_signatures_rna.sub %>% select(bcr_patient_barcode, project, tcga.dataset),
+      tmbDf.sub %>% select(bcr_patient_barcode, project, tcga.dataset)#,
+      # tumorPurityEstimate.sub %>% select(bcr_patient_barcode, project, tcga.dataset)
+      ) %>% distinct()
+dim(patientProject.DF)
+
+# Try toassign project tcga.dataset
+setdiff( tumorPurityEstimate.sub.f.agg$bcr_patient_barcode,patientProject.DF$bcr_patient_barcode)
+
+`%notin%` <- Negate(`%in%`)
+unique(patientProject.DF$project)
+tumorPurityEstimate.sub.f.agg <- merge(tumorPurityEstimate.sub.f.agg,patientProject.DF %>% dplyr::filter(project %notin% c("BRCA_LuminalA", "BRCA_Her2", "BRCA_LuminalB", "BRCA_Normal", "BRCA_TN", "COAD_MSS", "COAD_MSI_low", "COAD_MSI")), by="bcr_patient_barcode",all.x=TRUE)
+tumorPurityEstimate.sub.f.agg <- tumorPurityEstimate.sub.f.agg[,c(1,6,7,2:5)]
+tumorPurityEstimate.sub.f.agg %>% dplyr:: filter(bcr_patient_barcode %in% tumorPurityEstimate.sub.f.agg$bcr_patient_barcode[which(duplicated(tumorPurityEstimate.sub.f.agg$bcr_patient_barcode))])
+```
+
+
+## Cibersort subsets aggregation for B cells, CD8 T cells, CD4 T cells.
+
+```{r,warning=F, message=F,fig.show = 'hold', eval=TRUE, fig.width=15, fig.height=12}
+
+compactPopulations <- c("B_Cells_Naive","B_Cells_Memory","Plasma_Cells","T_Cells_CD8","T_Cells_CD4_Naive"           ,"T_Cells_CD4_Memory_Resting","T_Cells_CD4_Memory_Activated", "T_Cells_Regulatory_Tregs",
+                        "NK_Cells_Resting","NK_Cells_Activated",
+                        # "Dendritic_Cells_Resting","Dendritic_Cells_Activated",
+                        # "Monocytes",
+                        "Eosinophils_41","Mast_Cells_Resting","Mast_Cells_Activated","Neutrophils_48"
+                        # "Macrophages_M0", "Macrophages_M1","Macrophages_M2"
+                        )
+# bcells <-c("B.Cells.Memory","B.Cells.Naive","Plasma.Cells")
+# cd8 <-c("T.Cells.CD8.Naive","T.Cells.CD8.Actived","T.Cells.CD8.Memory")
+# cd4 <-c("T.Cells.CD4.Naive","T.Cells.CD4.Memory")
+# treg <-"Treg.Cells"
+# nkcell <-c("NK.Resting", "NK.Actived")
+# dc <-c("DC.Actived", "DC.Immature")
+# mono <-"Monocyte"
+# gran <-c("Eosinophil.Cells","Mast.Cells", "Neutrophil.Cells")
+# macro<-c("M0.Macrophage", "M1.Macrophage","M2.Macrophage")
+
+compactPopGroupsList <- list(B_cells=c("B_Cells_Naive","B_Cells_Memory","Plasma_Cells"),
+                             CD8cells=c("T_Cells_CD8"),
+                             CD4cells=c("T_Cells_CD4_Naive","T_Cells_CD4_Memory_Resting","T_Cells_CD4_Memory_Activated"),
+                             Tregs = c("T_Cells_Regulatory_Tregs"),
+                             NKcells=c("NK_Cells_Resting","NK_Cells_Activated"),
+                             # DCcells=c("Dendritic_Cells_Resting","Dendritic_Cells_Activated"),
+                             # Monocytes=c("Monocytes"),
+                             Granulocytes=c("Eosinophils_41","Mast_Cells_Resting","Mast_Cells_Activated","Neutrophils_48")
+                             # Macrophages=c("Macrophages_M0", "Macrophages_M1","Macrophages_M2")
+                             )
+
+compactNames<- names(compactPopGroupsList)
+
+
+
+## ABSOLUTE
+
+# Subset to compact sub-populations
+resCiber_abs.c <- mitcrDf2.sub[,c(compactPopulations)] %>% as.data.frame()#"bcr_patient_barcode",
+# resCiber_abs.c <- resCiber_abs.c %>% column_to_rownames(var="bcr_patient_barcode")
+
+absCompact<- sapply(1:length(compactNames), function(x) sumColumns(resCiber_abs.c,compactNames[x],compactPopGroupsList[[x]]),simplify = FALSE)
+
+absCompact <- bind_cols(absCompact)
+
+mitcrDf2.sub <- cbind(mitcrDf2.sub, absCompact[-2])
+
+colnames(mitcrDf2.sub)[31:64] <- paste0(colnames(mitcrDf2.sub)[31:64],".CIBER")
+
+
+
+colnames(danaherImmInfDf.sub.f.agg)[4:17] <- str_remove(colnames(danaherImmInfDf.sub.f.agg)[4:17]," ")
+colnames(danaherImmInfDf.sub.f.agg)[4:17] <-  paste0(colnames(danaherImmInfDf.sub.f.agg)[4:17],".DAN")
+```
+
+
+## Merge
+
+```{r,warning=F, message=F, eval=TRUE}
+# # Make dataframe with bcr patient barcode project and tcgha.dataset to deal with missing info on those.
+# dfToMerge <- list(biospecimen.tpnt.rna.merged.cl.f.sub.f %>% as.data.frame(),
+#                participDf.sub.f  %>% as.data.frame(),
+#                clinDf.sub  %>% as.data.frame(),
+#                tmbDf.sub  %>% as.data.frame(),
+#                danaherImmInfDf.sub.f.agg  %>% as.data.frame(),
+#                tumorPurityEstimate.sub.f.agg  %>% as.data.frame(),
+#                 gene_signatures_rna.sub.f.agg  %>% as.data.frame(),
+#                 gene_TISsignature_rna_TP.sub.f  %>% as.data.frame(),
+#                 mitcrDf2.sub %>% as.data.frame())
+# 
+# colsToMerge <- c(colnames(participDf.sub.f)[4:ncol(participDf.sub.f)],
+#                  colnames(clinDf.sub)[4:ncol(clinDf.sub)],
+#                  colnames(tmbDf.sub)[4:ncol(tmbDf.sub)],
+#                  colnames(danaherImmInfDf.sub.f.agg)[4:ncol(danaherImmInfDf.sub.f.agg)],
+#                  colnames(tumorPurityEstimate.sub.f.agg)[4:ncol(tumorPurityEstimate.sub.f.agg)],
+#                  colnames(gene_signatures_rna.sub.f.agg)[4:ncol(gene_signatures_rna.sub.f.agg)],
+#                  colnames(gene_TISsignature_rna_TP.sub.f)[4:ncol(gene_TISsignature_rna_TP.sub.f)],
+#                  colnames(mitcrDf2.sub)[4:ncol(mitcrDf2.sub)]
+#                  )
+# 
+# tcga.tp.Filt.final <-rbindlist(dfToMerge, fill=TRUE)[, c("disease_name",
+#                  "age_at_initial_pathologic_diagnosis", "gender","race", 
+#                  "ajcc_pathologic_tumor_stage","clinical_stage","histological_type", 
+#                  "histological_grade","initial_pathologic_dx_year", "menopause_status",
+#                   "birth_days_to", "vital_status","tumor_status", 
+#                  "last_contact_days_to","death_days_to","cause_of_death",
+#                 "new_tumor_event_type","new_tumor_event_site","new_tumor_event_site_other", 
+#                 "new_tumor_event_dx_days_to","treatment_outcome_first_course", "margin_status", 
+#                 "residual_tumor","OS", "OS.time", 
+#                 "DSS", "DSS.time","DFI", 
+#                 "DFI.time","PFI","PFI.time",
+#                 "Redaction",
+#                 "Silent_per_Mb","Non_silent_per_Mb", "logTMB","B-cells.DAN","DC.DAN","Macrophages.DAN","ExhaustedCD8.DAN","T-cells.DAN","CD8T cells.DAN","Neutrophils.DAN","Cytotoxiccells.DAN","Treg.DAN","NKCD56dim cells.DAN", "Mastcells.DAN","NKcells.DAN","CD45.DAN",            "Th1cells.DAN","StromalScore",  "ImmuneScore","ESTIMATEScore", "TumorPurity",
+#                  "IFNg_expanded_sigscore", "IFNg_small_sigscore", "TuTACK_sigscore", "PD_L1",
+#                  "TIS_sigscore",
+#                  "TCGA_Subtype","Immune_Subtype","Leukocyte_Fraction",
+#   "Stromal_Fraction","Intratumor_Heterogeneity","TIL_Regional_Fraction",
+#   "Proliferation" , "Wound_Healing", "Macrophage_Regulation",
+#   "Lymphocyte_Infiltration_Signature_Score", "IFN-gamma_Response", "TGF-beta_Response",
+#   "SNV_Neoantigens","Indel_Neoantigens","Silent_Mutation_Rate",
+#   "Nonsilent_Mutation_Rate","Number_of_Segments", "Fraction_Altered",
+#   "Aneuploidy_Score","Homologous_Recombination_Defects","BCR_Evenness",
+#   "BCR_Shannon", "BCR_Richness","TCR_Shannon",
+#   "TCR_Richness","TCR_Evenness","CTA_Score",
+#   "Th1_Cells.CIBER" ,"Th2_Cells.CIBER","Th17_Cells.CIBER",
+#   "B_Cells_Memory.CIBER" ,"B_Cells_Naive.CIBER","Dendritic_Cells_Activated.CIBER",
+#   "Dendritic_Cells_Resting.CIBER","Eosinophils_41.CIBER","Macrophages_M0.CIBER",
+#   "Macrophages_M1.CIBER","Macrophages_M2.CIBER","Mast_Cells_Activated.CIBER",
+#   "Mast_Cells_Resting.CIBER","Monocytes.CIBER","Neutrophils_48.CIBER",
+#   "NK_Cells_Activated.CIBER","NK_Cells_Resting.CIBER","Plasma_Cells.CIBER",
+#   "T_Cells_CD4_Memory_Activated.CIBER","T_Cells_CD4_Memory_Resting.CIBER","T_Cells_CD4_Naive.CIBER",
+#   "T_Cells_CD8.CIBER","T_Cells_Follicular_Helper.CIBER" ,"T_Cells_gamma_delta.CIBER", 
+#   "T_Cells_Regulatory_Tregs.CIBER" ,"Lymphocytes.CIBER" ,"Mast_Cells.CIBER",
+#   "Dendritic_Cells.CIBER","Macrophages.CIBER","B_cells.CIBER",
+#   "CD4cells.CIBER" ,"Tregs.CIBER","NKcells.CIBER","Granulocytes.CIBER"
+#                  ) :=lapply(.SD, na.omit) , bcr_patient_barcode, .SDcols=colsToMerge][] %>% distinct()
+# 
+
+dfToMerge <- list(biospecimen.tpnt.rna.merged.cl.f.sub.f %>% as.data.frame(),
+               participDf.sub.f  %>% as.data.frame(),
+               clinDf.sub  %>% as.data.frame(),
+               tmbDf.sub  %>% as.data.frame(),
+               danaherImmInfDf.sub.f.agg  %>% as.data.frame(),
+               tumorPurityEstimate.sub.f.agg  %>% as.data.frame(),
+                gene_signatures_rna.sub.f.agg  %>% as.data.frame(),
+                gene_TISsignature_rna_TP.sub.f  %>% as.data.frame(),
+                mitcrDf2.sub %>% as.data.frame())
+
+colsToMerge <- c(colnames(participDf.sub.f)[4:ncol(participDf.sub.f)],
+                 colnames(clinDf.sub)[4:ncol(clinDf.sub)],
+                 colnames(tmbDf.sub)[4:ncol(tmbDf.sub)],
+                 colnames(danaherImmInfDf.sub.f.agg)[4:ncol(danaherImmInfDf.sub.f.agg)],
+                 colnames(tumorPurityEstimate.sub.f.agg)[4:ncol(tumorPurityEstimate.sub.f.agg)],
+                 colnames(gene_signatures_rna.sub.f.agg)[4:ncol(gene_signatures_rna.sub.f.agg)],
+                 colnames(gene_TISsignature_rna_TP.sub.f)[4:ncol(gene_TISsignature_rna_TP.sub.f)],
+                 colnames(mitcrDf2.sub)[4:ncol(mitcrDf2.sub)]
+                 )
+
+tcga.tp.Filt.final <-rbindlist(dfToMerge, fill=TRUE)[, c("disease_name",
+                 "age_at_initial_pathologic_diagnosis", "gender","race", 
+                 "ajcc_pathologic_tumor_stage","clinical_stage","histological_type", 
+                 "histological_grade","initial_pathologic_dx_year", "menopause_status",
+                  "birth_days_to", "vital_status","tumor_status", 
+                 "last_contact_days_to","death_days_to","cause_of_death",
+                "new_tumor_event_type","new_tumor_event_site","new_tumor_event_site_other", 
+                "new_tumor_event_dx_days_to","treatment_outcome_first_course", "margin_status", 
+                "residual_tumor","OS", "OS.time", 
+                "DSS", "DSS.time","DFI", 
+                "DFI.time","PFI","PFI.time",
+                "Redaction",
+                "Silent_per_Mb","Non_silent_per_Mb", "logTMB","B-cells.DAN","DC.DAN","Macrophages.DAN","ExhaustedCD8.DAN","T-cells.DAN","CD8T cells.DAN","Neutrophils.DAN","Cytotoxiccells.DAN","Treg.DAN","NKCD56dim cells.DAN", "Mastcells.DAN","NKcells.DAN","CD45.DAN",            "Th1cells.DAN","StromalScore",  "ImmuneScore","ESTIMATEScore", "TumorPurity",
+                 "IFNg_expanded_sigscore", "IFNg_small_sigscore", "TuTACK_sigscore", "PD_L1","TLS_score",
+                 "TIS_sigscore",
+                 "TCGA_Subtype","Immune_Subtype","Leukocyte_Fraction",
+  "Stromal_Fraction","Intratumor_Heterogeneity","TIL_Regional_Fraction",
+  "Proliferation" , "Wound_Healing", "Macrophage_Regulation",
+  "Lymphocyte_Infiltration_Signature_Score", "IFN-gamma_Response", "TGF-beta_Response",
+  "SNV_Neoantigens","Indel_Neoantigens","Silent_Mutation_Rate",
+  "Nonsilent_Mutation_Rate","Number_of_Segments", "Fraction_Altered",
+  "Aneuploidy_Score","Homologous_Recombination_Defects","BCR_Evenness",
+  "BCR_Shannon", "BCR_Richness","TCR_Shannon",
+  "TCR_Richness","TCR_Evenness","CTA_Score",
+  "Th1_Cells.CIBER" ,"Th2_Cells.CIBER","Th17_Cells.CIBER",
+  "B_Cells_Memory.CIBER" ,"B_Cells_Naive.CIBER","Dendritic_Cells_Activated.CIBER",
+  "Dendritic_Cells_Resting.CIBER","Eosinophils_41.CIBER","Macrophages_M0.CIBER",
+  "Macrophages_M1.CIBER","Macrophages_M2.CIBER","Mast_Cells_Activated.CIBER",
+  "Mast_Cells_Resting.CIBER","Monocytes.CIBER","Neutrophils_48.CIBER",
+  "NK_Cells_Activated.CIBER","NK_Cells_Resting.CIBER","Plasma_Cells.CIBER",
+  "T_Cells_CD4_Memory_Activated.CIBER","T_Cells_CD4_Memory_Resting.CIBER","T_Cells_CD4_Naive.CIBER",
+  "T_Cells_CD8.CIBER","T_Cells_Follicular_Helper.CIBER" ,"T_Cells_gamma_delta.CIBER", 
+  "T_Cells_Regulatory_Tregs.CIBER" ,"Lymphocytes.CIBER" ,"Mast_Cells.CIBER",
+  "Dendritic_Cells.CIBER","Macrophages.CIBER","B_cells.CIBER",
+  "CD4cells.CIBER" ,"Tregs.CIBER","NKcells.CIBER","Granulocytes.CIBER"
+                 ) :=lapply(.SD, na.omit) , bcr_patient_barcode, .SDcols=colsToMerge][] %>% distinct()
+
+table(tcga.tp.Filt.final$project)
+median(tcga.tp.Filt.final$TIS_sigscore, na.rm = T)
+```
+
+We want to keep the following data:
+
+1. patient ID
+2. TCGA project with molecular subtype
+3. TCGA project (to see if for some missing)
+4. TMB 
+5. GEP, TuTack scores & PD-L1 normalized expression
+6. MiTCR clones
+7. Immune pancancer data: Richness, Evenness, Shannon Entropy and infiltration data
+8. Survival data
+
+
+# Missing values
+
+Visualize variables and missing data across variables.
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=12}
+
+visDF <- tcga.tp.Filt.final %>% distinct()
+
+visDF <- visDF %>% distinct()
+
+missmap(visDF, col=c("blue", "Indian red"), legend=FALSE)
+
+```
+
+
+# Save data
+
+```{r,warning=F, message=F, eval=TRUE}
+# save(tcga.tp.nonFilt.final,file=paste0(tcgaClinRDataPath, "tcga.tp.nonFilt.final.RData"))
+save(tcga.tp.Filt.final,file=paste0(tcgaIntermediateData, "tcga.tp.Filt.final.RData"))
+# save(tcga.tp.barcodes,file=paste0(tcgaClinRDataPath, "tcga.tp.barcodes.Filtered.RData"))
+
+```
+
+
+# REMOVE ICI DATA
+
+
+```{r,warning=F, message=F}
+mycancertypes <- levels(as.factor(tcga.tp.Filt.final$project))
+
+## Exclude THYM and DLBC
+mycancertypes.reduced <- mycancertypes[-which(mycancertypes %in% c("COAD_MSI_low","BRCA_Her2","BRCA_LuminalA", "BRCA_LuminalB","BRCA_Normal","BRCA_TN","COAD_MSI","COAD_MSS"))]
+
+mycancertypes.multi <- mycancertypes.reduced[mycancertypes.reduced %in% c("SKCM","KIRC", "STAD", "BLCA")]
+
+## Subset tables
+tcga.tp.Filt.final.sub <- tcga.tp.Filt.final %>% dplyr::filter(project %in% mycancertypes.reduced)
+```
+
+## Download ICI info
+
+Download clinical data and treatment info from TCGAbiolinks for SKCM (melanoma), KIRC and KIRP (RCC), STAD (gastric), BLCA (bladder)
+
+
+```{r,warning=F, message=F, eval=TRUE, echo=FALSE, results=FALSE}
+
+# # Download clinical data for TCGA
+# tcga.drug <- sapply(mycancertypes.multi , function(x) get_clinicalTCGA(x, tcgaDF=tcga.tp.Filt.final,barcodeCol="bcr_patient_barcode"), simplify = FALSE )
+# 
+# **NOTE**: Possible error arising from TCGAbiolinks package. Due to updates, the data types in the columns might change and the code below might require manual curation so that it runs smoothly. This is quite unpredictable
+# 
+# # Issue with regimen_number, total_dose, prescribed_dose column that is different data type across the cohorts
+# tcga.drug <- lapply(tcga.drug, function(df) {
+#   df$regimen_number <- as.character(df$regimen_number)
+#   df$total_dose <- as.character(df$total_dose)
+#   df$prescribed_dose <- as.character(df$prescribed_dose)
+#   
+#   return(df)
+# })
+# 
+# tcga.drug.df <-bind_rows(tcga.drug, .id = "column_label")
+# colnames(tcga.drug.df)[1] <- "project"
+
+## SKCM
+skcm <- tcga.tp.Filt.final %>% filter(project=="SKCM") %>% droplevels()
+query <- GDCquery(project = "TCGA-SKCM", 
+              data.category = "Clinical", 
+              file.type = "xml", 
+              barcode = skcm$bcr_patient_barcode)
+GDCdownload(query)
+clinical.skcm <- GDCprepare_clinic(query, clinical.info = "drug")
+
+# dim(clinical.skcm)
+## KIRC and KIRP
+rcc <- tcga.tp.Filt.final %>% filter(project %in% c("KIRC")) %>% droplevels()
+query <- GDCquery(project = "TCGA-KIRC", 
+              data.category = "Clinical", 
+              file.type = "xml", 
+              barcode = rcc$bcr_patient_barcode)
+GDCdownload(query)
+clinical.rcc1 <- GDCprepare_clinic(query, clinical.info = "drug")
+
+# rcc <- tcga.tp.Filt.final %>% filter(project %in% c("KIRP")) %>% droplevels()
+# query <- GDCquery(project = "TCGA-KIRP", 
+#               data.category = "Clinical", 
+#               file.type = "xml", 
+#               barcode = rcc$bcr_patient_barcode)
+# GDCdownload(query)
+# clinical.rcc2 <- GDCprepare_clinic(query, clinical.info = "drug")
+# 
+# clinical.rcc <- rbind(clinical.rcc1,clinical.rcc2)
+clinical.rcc <- rbind(clinical.rcc1)
+# dim(clinical.rcc)
+## STAD
+gastric <- tcga.tp.Filt.final %>% filter(project=="STAD") %>% droplevels()
+query <- GDCquery(project = "TCGA-STAD", 
+              data.category = "Clinical", 
+              file.type = "xml", 
+              barcode = gastric$bcr_patient_barcode)
+GDCdownload(query)
+clinical.gastric <- GDCprepare_clinic(query, clinical.info = "drug")
+# dim(clinical.gastric)
+## BLCA
+bladder <- tcga.tp.Filt.final %>% filter(project=="BLCA") %>% droplevels()
+query <- GDCquery(project = "TCGA-BLCA", 
+              data.category = "Clinical", 
+              file.type = "xml", 
+              barcode = bladder$bcr_patient_barcode)
+GDCdownload(query)
+clinical.bladder <- GDCprepare_clinic(query, clinical.info = "drug")
+# dim(clinical.bladder)
+tcga.drug <- rbind(clinical.skcm,clinical.gastric, clinical.rcc, clinical.bladder)
+
+save(tcga.drug, file=paste0(tcgaIntermediateData,"tcga.drug",Rdata.suffix))
+```
+
+## FIND NON ICI SAMPLES
+
+We want to exclude immunotherapies but not IFN-gamma, IFN-alpha, beta, IL-2
+
+```{r,warning=F, message=F}
+
+# SKCM, STAD, BRCA_Her2 DLBC COAD_MSI
+## Now subset tcga data to those patients that drug information
+tcga.drug <-loadRData(paste0(tcgaIntermediateData,"tcga.drug",Rdata.suffix))
+levels(tcga.drug$therapy_types)
+unique(as.character(tcga.drug$drug_name))
+
+table(tcga.drug$project)
+
+# DRUGS TO EXCLUDE
+tcga.drug.ici <- tcga.drug %>% dplyr::filter(therapy_types %in% c("Immunotherapy")) %>% droplevels()
+unique(as.character(tcga.drug.ici$drug_name))
+ici_to_exclude <- c("ipilimumab" , "Pembrolizumab", "Ipilimumab")
+
+tcga.drug.ici.To.Exclude <- tcga.drug %>% dplyr::filter(therapy_types %in% c("Immunotherapy")) %>%
+                                          dplyr::filter(drug_name %in% ici_to_exclude) %>% droplevels() %>%
+                                          pull(bcr_patient_barcode)
+
+length(tcga.drug.ici.To.Exclude)
+
+
+tcga.drug.ici.To.Exclude2 <- tcga.drug %>% dplyr::filter(drug_name %in% ici_to_exclude) %>% droplevels() %>%
+                                          pull(bcr_patient_barcode)
+
+length(tcga.drug.ici.To.Exclude2)
+
+tcga.drug.ici.Only <- tcga.drug %>% dplyr::filter(bcr_patient_barcode %notin% tcga.drug.ici.To.Exclude2) %>% droplevels()
+
+table(tcga.drug.ici.Only$project)
+
+```
+
+## Save data
+
+```{r,warning=F, message=F}
+# save(tcga.drug.ici.Only,file=paste0(tcgaIntermediateData, "tcga.tp.Filt.final_ICI4Tissues.RData"))
+
+save(tcga.drug.ici.To.Exclude2,file=paste0(tcgaIntermediateData, "tcga_patientsNOTici_toEXCLUDE_4Tissues.RData"))
+```
+
+
+# Session
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+# Cleanup
+unlink(paste0("GDCdata"),recursive=TRUE)
+unlink(paste0("MANIFEST.txt"),recursive=TRUE)
+unlink(paste0('*VennDiagram*'))
+# Session
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"A_06_tcga_clinical_biomarker_metadata.txt"))
+
+sessionInfo()
+
+```

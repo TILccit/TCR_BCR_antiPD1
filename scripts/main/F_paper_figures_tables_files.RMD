@@ -1,0 +1,2793 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center> Main and supplementary tables, figures, files</center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 16 Sept 2022. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 6
+    number_sections: true
+    #df_print: paged
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1')
+unlink("scripts/main/F_paper_figures_tables_files_cache", recursive = TRUE)
+```
+
+
+```{r,warning=F, message=F}
+# ## Clear R-workspace
+# rm(list=ls(all=TRUE))
+
+## Close all graphic devices
+graphics.off()
+#####################
+### Load packages ###
+#####################
+library(pacman)
+
+pacman::p_load(extrafont,DT,dplyr,tibble,ggplot2, hrbrthemes, grid, gridExtra, cowplot,Cairo,
+               tidyverse,ggpubr, ggrepel,cowplot,
+               RColorBrewer, pander,gridExtra, survival, survminer, caret, precrec, 
+               reconPlots,flextable, extrafont,readxl, reshape2,rstatix,ggbeeswarm,
+               cowplot,tidyquant,zoo,plyr,xlsx,corrr,ggnet,ggnetwork,
+               tidygraph,ggraph,intergraph,clusterProfiler,AnnotationDbi,org.Hs.eg.db,rrvgo,data.table,GO.db,multienrichjam, DOSE, openxlsx,GOfuncR, officer)
+
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+antiPDL1publicInputData <- paste0(projectDataPath,"antiPD(L)1_public/")
+otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+# Output
+projectOutDataPath <- paste0("output/data_files/")
+tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+antiPDL1publicIntermediateData <- paste0(projectOutDataPath,"antiPD(L)1_public/")
+# Output for differential expression analysis and gene ontology (similarity)
+DEA_GOoutData <- paste0(projectOutDataPath,"DEA_GO/")
+# Output for survival analysis 
+survivalOutData <- paste0(projectOutDataPath,"survival/")
+
+figuresPath <- paste0("output/figures/")
+tablesPath <- paste0("output/tables/")
+modelsPath <- paste0("output/models/")
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+
+# Other intermediate output
+testDataOut <-paste0(modelsPath,"test_data/")
+rocCompareOut <-paste0(modelsPath,"roc_compare/")
+modelsInterm <- paste0(modelsPath,"models_interm_files/")
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"paper_figures_tables_files_functions.R"))
+
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+# Other script variables
+modelTypeA <- "_TCRArichnessIGH.ds"
+modelTypeB <- "_noLIU"
+modelTypeC <- "_mintcr4bcr10"
+
+## Other script parameters ##
+runFiltSim <- TRUE
+```
+
+
+# Data loading {.tabset .tabset-fade .tabset-pills}
+
+## Reference data
+
+```{r,warning=F, message=F}
+geneid2symb <- read.table(file.path(paste0(referenceInputData, "genID2name.csv")), header = TRUE, sep = ",")
+geneid2symb$gene_id <- as.character(geneid2symb$gene_id)
+geneid2symb$gene_name <- as.character(geneid2symb$gene_name)
+```
+
+## TCGA DATA
+```{r,warning=F, message=F}
+tcgaData.tp <- loadRData(paste0(tcgaIntermediateData, "tcga.tp.Filt.final",Rdata.suffix))
+# tcga.drug.notICI <-loadRData(paste0(tcgaIntermediateData, "tcga.tp.nonFilt.final_ICI4Tissues.RData")) # NOT USED
+tcga.drug.ici.To.Exclude2 <- loadRData(paste0(tcgaIntermediateData, "tcga_patientsNOTici_toEXCLUDE_4Tissues.RData"))
+# ###################
+# # Compare with init TCGA
+# tcgaData.tp.init <- loadRData(paste0("C:/Users/aimilia/BIOINF/1_DATA/3_TCGA/ClinicalDataTables/RData/", "tcga.tp.Filt.final",Rdata.suffix))
+# 
+# median(tcgaData.tp.init$TIS_sigscore, na.rm = T)
+# median(tcgaData.tp$TIS_sigscore, na.rm = T)
+# 
+# median(tcgaData.tp.init$BCR_Richness, na.rm = T)
+# median(tcgaData.tp$BCR_Richness, na.rm = T)
+##################
+
+
+table(tcgaData.tp$project)
+# table(tcga.drug.notICI$project) # NOT USED
+
+# See which patients we need to remove
+tcgaData.tp %>% dplyr::filter(bcr_patient_barcode %in% tcga.drug.ici.To.Exclude2) %>% droplevels() %>% distinct() %>% dplyr::select(bcr_patient_barcode, project) %>% distinct()
+# Remove patients that received aPD1 immunotherapy.
+tcgaData.tp.clean <- tcgaData.tp %>% dplyr::filter(bcr_patient_barcode %notin% tcga.drug.ici.To.Exclude2) %>% 
+                                      droplevels() %>% 
+                                      distinct()
+dim(tcgaData.tp)
+dim(tcgaData.tp.clean)
+
+featuresSelected <- c("bcr_patient_barcode", "project","PD_L1","logTMB","BCR_Richness","TCR_Richness",
+                      "B_cells.CIBER", "T_Cells_CD8.CIBER", "CD4cells.CIBER","TIS_sigscore", "TumorPurity","OS","OS.time","PFI","PFI.time","age_at_initial_pathologic_diagnosis","gender")
+
+extraFeatures <- c("StromalScore", "ImmuneScore")
+
+featuresIn <- c("TCR_Richness","BCR_Richness","logTMB","PD_L1","TIS_sigscore",
+                      "CD8cells", "CD4cells","B_cells",  "TumorPurity")
+featuresInLabels <- c("TCR Richness","BCR Richness","logTMB","PD-L1 expression","T-cell inflamed GEP", "CD8+ T-cells infiltration","CD4+ T-cells infiltration","B cells infiltration",
+            "Tumor Purity")
+## FOR TP data
+tcgaData.tp.sub <- tcgaData.tp.clean %>% dplyr::select(all_of(featuresSelected)) %>% droplevels() %>% distinct()
+tcgaData.tp.sub.extra <- tcgaData.tp.clean %>% dplyr::select(all_of(c(featuresSelected,extraFeatures))) %>% droplevels() %>% distinct()
+
+colnames(tcgaData.tp.sub)[7:9] <- gsub(".CIBER","",colnames(tcgaData.tp.sub)[7:9])
+colnames(tcgaData.tp.sub)[8] <- "CD8cells"
+
+# Keep rows where at least on of the features of interested is not NA
+tcgaData.tp.sub <-tcgaData.tp.sub[rowSums(is.na(tcgaData.tp.sub[,3:11])) != 9,]
+tcgaData.tp.sub.extra <-tcgaData.tp.sub.extra[rowSums(is.na(tcgaData.tp.sub.extra[,3:11])) != 9,]
+dim(tcgaData.tp.sub)
+dim(tcgaData.tp.sub.extra)
+
+mycancertypes <- levels(as.factor(tcgaData.tp.sub$project))
+## Exclude THYM and DLBC
+mycancertypes.reduced <- mycancertypes[-which(mycancertypes %in% c("THYM", "DLBC","COAD_MSI_low","BRCA_Her2","BRCA_LuminalA", "BRCA_LuminalB","BRCA","BRCA_Normal","COAD","UCEC","LAML"))]
+
+## TCGA histologies aligned with aPD1 data
+mycancertypes.final <- c("SKCM", "KIRC","BLCA","STAD")
+## Subset data to reduced types
+tcgaData.tp.sub.filt <- tcgaData.tp.sub %>% dplyr::filter(project %in% mycancertypes.reduced) %>% droplevels()
+tcgaData.tp.sub.extra.filt<- tcgaData.tp.sub.extra %>% dplyr::filter(project %in% mycancertypes.reduced) %>% droplevels()
+
+# Make project a factor with levels
+tcgaData.tp.sub.filt$project <- factor(tcgaData.tp.sub.filt$project, levels=mycancertypes.reduced)
+tcgaData.tp.sub.extra.filt$project <- factor(tcgaData.tp.sub.extra.filt$project, levels=mycancertypes.reduced)
+
+#CHECK DUPLICATED PATIENTS
+which(duplicated(tcgaData.tp.sub.filt$bcr_patient_barcode))
+tcgaData.tp.sub.filt[tcgaData.tp.sub.filt$bcr_patient_barcode==tcgaData.tp.sub.filt$bcr_patient_barcode[125],]
+
+tcgaData.tp.sub.filt$OS.time <-tcgaData.tp.sub.filt$OS.time/(365.24/12)
+## ADD OBJECTIVE RESPONSE DATA
+## ORR data
+orrDf <- read_excel(paste0(otherInputData,"ORR_TMB_table.xlsx"),sheet = 2)
+orrDf <- as.data.frame(orrDf[,c(1:4,9:10)])
+colnames(orrDf) <- c("TCGA_ca", "PD1L1_responders","PD1L1_totalTreated", "ORR", "project","Additional_info")
+# Select only lines with complete info in first 5 columns
+orrDf_final <- orrDf[complete.cases(orrDf[,1:5]),]
+# Change name for COAD MSI &MSS
+orrDf_final$project[7:8] <- c("COAD_MSI", "COAD_MSS")
+
+# UPDATED ONE
+orrDf2 <- read_excel(paste0(otherInputData,"ORR new TABLE.xlsx"),sheet = 2)
+orrDf2 <- as.data.frame(orrDf2[,c(1:4,9:10)])
+colnames(orrDf2) <- c("TCGA_ca", "PD1L1_responders","PD1L1_totalTreated", "ORR", "project","Additional_info")
+# Select only lines with complete info in first 5 columns
+orrDf_final2 <- orrDf2[complete.cases(orrDf2[,1:5]),]
+orrDf_final2$project <-str_replace(orrDf_final2$project," ","_")
+## For common cancers, keep the updated ones and add the missing ones from old one.
+## Common cancers
+intersect(orrDf_final$project,orrDf_final2$project)
+## Missed cancers in updated version
+setdiff(orrDf_final$project,orrDf_final2$project)
+
+orrDf_final.missed <- orrDf_final %>% dplyr::filter(project %in% setdiff(orrDf_final$project,orrDf_final2$project)) %>% droplevels()
+# Merge with updated one
+orrDf <- rbind(orrDf_final2,orrDf_final.missed) %>% distinct() %>% droplevels()
+# Change name for COAD MSI &MSS
+# orrDf_final2$project[7:8] <- c("COAD_MSI", "COAD_MSS")
+tcgaData.tp.sub.filt.orr <- merge(tcgaData.tp.sub.filt, orrDf %>% dplyr::select(ORR,project) %>% distinct() %>% droplevels(),
+                                  by="project", all=TRUE)
+unique(tcgaData.tp.sub.filt.orr$project)
+
+tcgaData.tp.sub.filt.orr <- merge(tcgaData.tp.sub.filt, orrDf %>% dplyr::select(ORR,project) %>% distinct() %>% droplevels(),
+                                  by="project", all.x=TRUE)
+unique(tcgaData.tp.sub.filt.orr$project)
+length(unique(tcgaData.tp.sub.filt.orr$project))
+unique(orrDf$project)
+```
+
+## aPD1 data
+
+```{r,warning=F, message=F}
+immdata.TcrBcr.full.red <- loadRData(paste0(antiPDL1publicIntermediateData,"immdata.TcrBcr.full.red",modelTypeA,modelTypeB,modelTypeC,".RData"))
+immdata.TcrBcr.full.red$response <- ifelse(immdata.TcrBcr.full.red$response=="CR+PR","CRPR",immdata.TcrBcr.full.red$response)
+## FILTER DATA FOR PD, CR, PR (.sub)
+immdata.TcrBcr.full.red.sub <- immdata.TcrBcr.full.red %>% dplyr::filter(response %in% c("PD","CRPR")) %>% droplevels()
+## EXTRACT RESPONSE, NOMINAL, MEASURE VARIABLES FROM DATA
+response.var <- "response"
+nominal.vars <- c("dataset","tissue","gender")
+
+measure.vars <-colnames(immdata.TcrBcr.full.red)[c(2:10,12,32:43)]
+measure.vars <- measure.vars[c(6,22,1:3,20,21,4:5,10,7:9,11:19)]
+
+
+## CHECK INFINITE LOG TMB VALUES
+immdata.TcrBcr.full.red.sub[which(is.infinite(immdata.TcrBcr.full.red.sub$logTMB)),]
+
+## Extract tissues in data so far
+tissues <- unique(immdata.TcrBcr.full.red.sub$tissue)
+
+
+# Which are the covariates I am considering
+# covariatesIn <- measure.vars[c(1:2,4:7,14:16)]
+covariatesIn <- measure.vars[c(1:2,4:7,14:16)]
+# covariatesIn <- measure.vars[c(1:2,4:8,15:17)]
+
+responseVar <- "response"
+
+colnames(immdata.TcrBcr.full.red)[c(7,43,32,4)] <- c("TCR_Richness","BCR_Richness","B_cells","PD_L1")
+
+
+immdata.TcrBcr.full.red$tissue <- ifelse(immdata.TcrBcr.full.red$tissue=="melanoma", "SKCM anti-PD-1/L1",
+                                         ifelse(immdata.TcrBcr.full.red$tissue=="RCC","KIRC anti-PD-1/L1",
+                                                ifelse(immdata.TcrBcr.full.red$tissue=="bladder","BLCA anti-PD-1/L1",                                             ifelse(immdata.TcrBcr.full.red$tissue=="gastric","STAD anti-PD-1/L1",immdata.TcrBcr.full.red$tissue))))
+
+immdata.TcrBcr.full.red$tissue <- factor(immdata.TcrBcr.full.red$tissue, levels=paste0(mycancertypes.final, " anti-PD-1/L1"))
+```
+
+## Set parameters and labels for analysis
+
+```{r,warning=F, message=F,results='asis', fig.width=10, fig.height=6}
+
+parameters <- colnames(tcgaData.tp.sub.filt)[c(3:5,7:11)]
+labels <- c("PD-L1 expression","logTMB","BCR Richness","B cells infiltration","CD8+ T-cells infilitration","CD4+ T-cells infilitration",
+            "T-cell inflamed GEP", "Tumor Purity")
+
+```
+
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=6, fig.height=8}
+tcgaData.tp.sub.filt.orr %>% dplyr::select(project,bcr_patient_barcode,ORR) %>% dplyr::group_by(project,ORR) %>% distinct() %>% dplyr::summarize(n())
+
+tcga.cancers <- tcgaData.tp.sub.filt.orr %>% dplyr::pull(project) %>% unique()
+orr_selected_cancers <- tcga.cancers[tcga.cancers %in% orrDf$project] # TOTAL 26 TCGA 
+
+```
+
+
+
+# Correlations {.tabset .tabset-fade .tabset-pills}
+
+Here I calculate:
+
+1. Global correlations for the 9 features
+2. Multicancer (4 cohorts) correlations for the 9 features
+3. Also calculate the significance of those correlations
+4. Correlations of TCR vs CD8/CD4 across TCGA with rolling avg
+5. Correlations of BCR vs Bcells/CD8/GEP across TCGA with rolling avg
+6. Objective response correlations
+
+I want to have a network diagram, preferably a circle one, with stable positions, so not using distances, or creating clusters of highly correlated features. This diagram ideally should present the strength/size of the correlation by thickness of connecting line, whether it is positive or negative, by color of line and ideally should only present significant correlations, meaning that for non-significant, there will be no line. Idea is to provide a table with the correlations and the significance as supplementary table, so people can see exact values. But the graph should support visually the patterns, especially the transition from global to multicancer. Then as supplementary we should have the same network graphs for each cancer type separately, again to see if patterns are similar. It's way easier with the graphs
+
+
+Calculate correlation matrices between features
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=12, fig.height=8}
+
+## TCGA GLOBAL
+tidy_cors.global <- tcgaData.tp.sub.filt %>% dplyr::filter(project %in% mycancertypes.reduced) %>% 
+  dplyr::select(all_of(featuresIn)) %>% 
+  setNames(featuresInLabels) %>%
+  correlate(use = "pairwise.complete.obs", # This is very important
+  method = "spearman", diagonal=1) #%>% 
+  #stretch()
+
+# Check significance of correlations
+cormat.gb <- tidy_cors.global %>% column_to_rownames(var="term") %>% as.matrix()
+# head(cormat)
+upper_tri <- get_upper_tri(cormat.gb)
+melted_cormat.gb <- reshape2::melt(cormat.gb, na.rm = TRUE)
+# head(melted_cormat)
+
+formCors.gb <- formatted_cors(tcgaData.tp.sub.filt %>% dplyr::filter(project %in% mycancertypes.reduced) %>% 
+  dplyr::select(all_of(featuresIn)) %>% setNames(featuresInLabels), methodSel = NULL)
+formCors.gb$measure2 <- gsub('\\.\\.',"+ ",formCors.gb$measure2 )
+formCors.gb$measure2 <- gsub('\\.'," ",formCors.gb$measure2 )
+formCors.gb$measure2 <- ifelse(formCors.gb$measure2=="PD L1 expression","PD-L1 expression",
+                            ifelse(formCors.gb$measure2=="T cell inflamed GEP","T-cell inflamed GEP",
+                                   ifelse(formCors.gb$measure2=="CD8+ T cells infiltration","CD8+ T-cells infiltration",
+                                          ifelse(formCors.gb$measure2=="CD4+ T cells infiltration","CD4+ T-cells infiltration",formCors.gb$measure2))))
+formCors.gb$measure1 <- factor(formCors.gb$measure1, levels = levels(melted_cormat.gb$Var1))
+formCors.gb$measure2 <- factor(formCors.gb$measure2, levels = levels(melted_cormat.gb$Var2))
+
+
+
+## TCGA MULTICOHORT (4)
+tidy_cors.multi <- tcgaData.tp.sub.filt %>% dplyr::filter(project %in% mycancertypes.final) %>% 
+  dplyr::select(all_of(featuresIn))%>% 
+  setNames(featuresInLabels) %>%
+  correlate(use = "pairwise.complete.obs", # This is very important
+  method = "spearman") #%>% 
+  #stretch()
+cormat.ml <- tidy_cors.multi %>% column_to_rownames(var="term") %>% as.matrix()
+# head(cormat)
+upper_tri <- get_upper_tri(cormat.ml)
+melted_cormat.ml <- reshape2::melt(cormat.ml, na.rm = TRUE)
+# head(melted_cormat)
+
+formCors.ml <- formatted_cors(tcgaData.tp.sub.filt %>% dplyr::filter(project %in% mycancertypes.final) %>% 
+  dplyr::select(all_of(featuresIn))%>% 
+  setNames(featuresInLabels) , methodSel = NULL)
+formCors.ml$measure2 <- gsub('\\.\\.',"+ ",formCors.ml$measure2 )
+formCors.ml$measure2 <- gsub('\\.'," ",formCors.ml$measure2 )
+formCors.ml$measure2 <- ifelse(formCors.ml$measure2=="PD L1 expression","PD-L1 expression",
+                            ifelse(formCors.ml$measure2=="T cell inflamed GEP","T-cell inflamed GEP",
+                                   ifelse(formCors.ml$measure2=="CD8+ T cells infiltration","CD8+ T-cells infiltration",
+                                          ifelse(formCors.ml$measure2=="CD4+ T cells infiltration","CD4+ T-cells infiltration",formCors.ml$measure2))))
+formCors.ml$measure1 <- factor(formCors.ml$measure1, levels = levels(melted_cormat.ml$Var1))
+formCors.ml$measure2 <- factor(formCors.ml$measure2, levels = levels(melted_cormat.ml$Var2))
+
+
+### TCGA INDIVID MULTICANCER
+
+tidy_cors.multi.sep <- sapply(mycancertypes.final, function(x) tcgaData.tp.sub.filt %>% dplyr::filter(project ==x) %>% 
+  dplyr::select(all_of(featuresIn))%>% 
+  setNames(featuresInLabels) %>%
+  correlate(use = "pairwise.complete.obs", # This is very important
+  method = "spearman"),simplify = FALSE)
+
+
+cormat.ml.sep <- sapply(tidy_cors.multi.sep, function(x) x %>% column_to_rownames(var="term") %>% as.matrix(), simplify = FALSE)
+# head(cormat)
+upper_tri.ml.sep <- sapply(cormat.ml.sep, function(x) get_upper_tri(x), simplify = FALSE)
+
+melted_cormat.ml.sep <- sapply(cormat.ml.sep, function(x) reshape2::melt(x, na.rm = TRUE), simplify = FALSE)
+
+formCors.ml.sep <- sapply(mycancertypes.final, function(x) formatted_cors(tcgaData.tp.sub.filt %>% dplyr::filter(project ==x) %>% 
+  dplyr::select(all_of(featuresIn))%>% 
+  setNames(featuresInLabels) , methodSel = NULL),simplify = FALSE)
+
+formCors.ml.sep$SKCM$measure2 <- gsub('\\.\\.',"+ ",formCors.ml.sep$SKCM$measure2)
+formCors.ml.sep$SKCM$measure2 <- gsub('\\.'," ",formCors.ml.sep$SKCM$measure2 )
+formCors.ml.sep$SKCM$measure2 <- ifelse(formCors.ml.sep$SKCM$measure2=="PD L1 expression","PD-L1 expression",
+                            ifelse(formCors.ml.sep$SKCM$measure2=="T cell inflamed GEP","T-cell inflamed GEP",
+                                   ifelse(formCors.ml.sep$SKCM$measure2=="CD8+ T cells infiltration","CD8+ T-cells infiltration",
+                                          ifelse(formCors.ml.sep$SKCM$measure2=="CD4+ T cells infiltration","CD4+ T-cells infiltration",formCors.ml.sep$SKCM$measure2))))
+formCors.ml.sep$SKCM$measure1 <- factor(formCors.ml.sep$SKCM$measure1, levels = levels(melted_cormat.ml.sep$SKCM$Var1))
+formCors.ml.sep$SKCM$measure2 <- factor(formCors.ml.sep$SKCM$measure2, levels = levels(melted_cormat.ml.sep$SKCM$Var2))
+## STAD
+formCors.ml.sep$STAD$measure2 <- gsub('\\.\\.',"+ ",formCors.ml.sep$STAD$measure2)
+formCors.ml.sep$STAD$measure2 <- gsub('\\.'," ",formCors.ml.sep$STAD$measure2 )
+formCors.ml.sep$STAD$measure2 <- ifelse(formCors.ml.sep$STAD$measure2=="PD L1 expression","PD-L1 expression",
+                            ifelse(formCors.ml.sep$STAD$measure2=="T cell inflamed GEP","T-cell inflamed GEP",
+                                   ifelse(formCors.ml.sep$STAD$measure2=="CD8+ T cells infiltration","CD8+ T-cells infiltration",
+                                          ifelse(formCors.ml.sep$STAD$measure2=="CD4+ T cells infiltration","CD4+ T-cells infiltration",formCors.ml.sep$STAD$measure2))))
+formCors.ml.sep$STAD$measure1 <- factor(formCors.ml.sep$STAD$measure1, levels = levels(melted_cormat.ml.sep$STAD$Var1))
+formCors.ml.sep$STAD$measure2 <- factor(formCors.ml.sep$STAD$measure2, levels = levels(melted_cormat.ml.sep$STAD$Var2))
+##BLCA
+formCors.ml.sep$BLCA$measure2 <- gsub('\\.\\.',"+ ",formCors.ml.sep$BLCA$measure2)
+formCors.ml.sep$BLCA$measure2 <- gsub('\\.'," ",formCors.ml.sep$BLCA$measure2 )
+formCors.ml.sep$BLCA$measure2 <- ifelse(formCors.ml.sep$BLCA$measure2=="PD L1 expression","PD-L1 expression",
+                            ifelse(formCors.ml.sep$BLCA$measure2=="T cell inflamed GEP","T-cell inflamed GEP",
+                                   ifelse(formCors.ml.sep$BLCA$measure2=="CD8+ T cells infiltration","CD8+ T-cells infiltration",
+                                          ifelse(formCors.ml.sep$BLCA$measure2=="CD4+ T cells infiltration","CD4+ T-cells infiltration",formCors.ml.sep$BLCA$measure2))))
+formCors.ml.sep$BLCA$measure1 <- factor(formCors.ml.sep$BLCA$measure1, levels = levels(melted_cormat.ml.sep$BLCA$Var1))
+formCors.ml.sep$BLCA$measure2 <- factor(formCors.ml.sep$BLCA$measure2, levels = levels(melted_cormat.ml.sep$BLCA$Var2))
+##KIRC
+formCors.ml.sep$KIRC$measure2 <- gsub('\\.\\.',"+ ",formCors.ml.sep$KIRC$measure2)
+formCors.ml.sep$KIRC$measure2 <- gsub('\\.'," ",formCors.ml.sep$KIRC$measure2 )
+formCors.ml.sep$KIRC$measure2 <- ifelse(formCors.ml.sep$KIRC$measure2=="PD L1 expression","PD-L1 expression",
+                            ifelse(formCors.ml.sep$KIRC$measure2=="T cell inflamed GEP","T-cell inflamed GEP",
+                                   ifelse(formCors.ml.sep$KIRC$measure2=="CD8+ T cells infiltration","CD8+ T-cells infiltration",
+                                          ifelse(formCors.ml.sep$KIRC$measure2=="CD4+ T cells infiltration","CD4+ T-cells infiltration",formCors.ml.sep$KIRC$measure2))))
+formCors.ml.sep$KIRC$measure1 <- factor(formCors.ml.sep$KIRC$measure1, levels = levels(melted_cormat.ml.sep$KIRC$Var1))
+formCors.ml.sep$KIRC$measure2 <- factor(formCors.ml.sep$KIRC$measure2, levels = levels(melted_cormat.ml.sep$KIRC$Var2))
+
+
+```
+
+## Networks of correlations with clusters{.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=12, fig.height=8}
+global.net<-network_plot(tidy_cors.global,min_cor = .3, repel= TRUE, curved = TRUE,colours = c("navyblue", "white", "indianred2"),) + labs(color="Spearman's Correlation") 
+
+global.net$layers[[3]]$aes_params$family <- "Palatino Linotype"
+global.net$layers[[3]]$aes_params$size <- 8
+
+multi.net<-network_plot(tidy_cors.multi,min_cor = .3, repel= TRUE, curved = TRUE,colours = c("navyblue", "white", "indianred2"),) + labs(color="Spearman's Correlation") 
+
+multi.net$layers[[3]]$aes_params$family <- "Palatino Linotype"
+multi.net$layers[[3]]$aes_params$size <- 8
+
+
+
+full_netClusters <- ggarrange(plotlist = list(global.net, multi.net), common.legend = TRUE, legend="bottom",labels = c("A. Pancancer", "B. Multicancer"),font.label = list(size = 14, color = "black", face = "bold", family = "Palatino Linotype"))
+
+full_netClusters
+```
+
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=12, fig.height=8}
+
+multi.net.sep<-sapply(tidy_cors.multi.sep, function(x) network_plot(x,min_cor = 0.3, repel= TRUE, curved = TRUE,colours = c("navyblue", "white", "indianred2"),) + labs(color="Spearman's Correlation"), simplify = FALSE) 
+multi.net.sep
+
+
+
+```
+
+
+### Circle Networks with gradient color
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=25, fig.height=10}
+
+# Select only significant p-value correlations
+formCors.ml.sign <- formCors.ml %>% dplyr::filter(sig_p==TRUE) %>% droplevels()
+formCors.gb.sign <- formCors.gb %>% dplyr::filter(sig_p==TRUE) %>% droplevels()
+
+cor.graph.ml <- as_tbl_graph(formCors.ml.sign, directed = FALSE) %>% activate(edges) %>%
+  dplyr::rename(weight = r)
+
+
+```
+
+
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=12, fig.height=8}
+# Select only significant p-value correlations
+formCors.ml.sep.sign <- sapply(formCors.ml.sep, function(x) x %>% dplyr::filter(sig_p==TRUE) %>% droplevels(), simplify = FALSE)
+
+cor.graph.ml.sep <- sapply(formCors.ml.sep.sign, function(x) as_tbl_graph(x, directed = FALSE) %>% activate(edges) %>%
+  dplyr::rename(weight = r), simplify = FALSE)
+
+
+
+
+```
+
+
+
+## Objective response rate {.tabset .tabset-fade .tabset-pills}
+
+### TCR & BCR
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=16, fig.height=6}
+
+tcgaData.tp.sub.filt.orr %>% dplyr::select(project,bcr_patient_barcode,ORR) %>% dplyr::group_by(project,ORR) %>% distinct() %>% dplyr::summarize(n())
+tcga.cancers <- tcgaData.tp.sub.filt.orr %>% pull(project) %>% unique()
+orr_selected_cancers <- tcga.cancers[tcga.cancers %in% orrDf$project] # TOTAL 26 TCGA 
+orr_tcr <- orr_corrPlot_tcga(tcgaData.tp.sub.filt.orr ,"TCR_Richness", aggregateBy="project", median,"median", mergeByCol="project",orr_selected_cancers, orrDf, "TCR Richness", 20, 0.08,0.015, "pearson")
+# orr_tcr
+orr_bcr <- orr_corrPlot_tcga(tcgaData.tp.sub.filt.orr ,"BCR_Richness", aggregateBy="project", median,"median", mergeByCol="project",orr_selected_cancers, orrDf, "BCR Richness", 24, 0.08,0.015, "pearson")
+
+leg <- get_legend(orr_bcr +theme(legend.position="bottom", legend.box = "horizontal"))
+pOrr <-ggdraw() +
+  draw_plot(orr_tcr +rremove("legend"),x = 0, y = 0.06, width = .5, height = .93) +
+  draw_plot(orr_bcr +rremove("legend"),x = 0.5, y = 0.06, width = .5, height = .93) +
+  draw_plot(leg,x = 0.45, y = 0, width = .1, height = .05)+
+  draw_plot_label(label = c("A", "B"), size = 15,
+                  x = c(0, 0.5), y = c(1, 1),family="Palatino Linotype")
+
+pOrr
+
+```
+
+
+### Other parameters
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=20, fig.height=15}
+others <- c("logTMB","PD_L1", "TIS_sigscore","CD8cells", "CD4cells", "B_cells", "TumorPurity")
+othersLabels <- featuresInLabels[3:9]
+othersxPlus <-c(.7,.7, .3, .03, .03,  0.035,.07)
+othersyPlus <-c(0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08)
+othersyMinus <-c(0.015, 0.015, 0.015, 0.015, 0.015, 0.015, 0.015)
+
+othersParam <- list(others, othersLabels, othersxPlus, othersyPlus, othersyMinus)
+orr_others <- sapply(1:7, function(x) orr_corrPlot_tcga(tcgaData.tp.sub.filt.orr ,othersParam[[1]][x], aggregateBy="project", median,"median", mergeByCol="project",orr_selected_cancers, orrDf, othersParam[[2]][x],othersParam[[3]][x], othersParam[[4]][x], othersParam[[5]][x], "pearson"), simplify = FALSE)
+
+
+pOrr.other <- ggarrange(plotlist = orr_others, legend = "bottom", common.legend = TRUE, ncol=3, nrow=3,labels = c(paste0(paste0(LETTERS[1:7],""))),font.label = list(size = 16, color = "black", face = "bold", family = "Palatino Linotype"))
+pOrr.other
+
+
+```
+
+### All parameters together
+
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=20, fig.height=15}
+others <- featuresIn
+othersLabels <- featuresInLabels
+
+othersxPlus <-c(20,24,.7,.7, .3, .03, .03,  0.035,.07)
+othersyPlus <-c(0.08,0.08,0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08)
+othersyMinus <-c(0.015,0.015,0.015, 0.015, 0.015, 0.015, 0.015, 0.015, 0.015)
+
+
+othersParam <- list(others, othersLabels, othersxPlus, othersyPlus, othersyMinus)
+orr_others <- sapply(1:9, function(x) orr_corrPlot_tcga(tcgaData.tp.sub.filt.orr ,othersParam[[1]][x], aggregateBy="project", median,"median", mergeByCol="project",orr_selected_cancers, orrDf, othersParam[[2]][x],othersParam[[3]][x], othersParam[[4]][x], othersParam[[5]][x], "pearson"), simplify = FALSE)
+# orr_others
+
+
+pOrr.all <- ggarrange(plotlist = orr_others, legend = "bottom", common.legend = TRUE, ncol=3, nrow=3,labels = c(paste0(paste0(LETTERS[1:9],". "),othersLabels)),font.label = list(size = 12, color = "black", face = "bold", family = "Palatino Linotype"), align="v",
+                      hjust=c(-0.34,-0.34,-0.5,-0.26,-0.24,-0.2,-0.2,-0.27,-0.345))
+pOrr.all
+
+pOrr.all2 <- ggarrange(plotlist = orr_others, legend = "bottom", common.legend = TRUE, ncol=3, nrow=3,labels = "AUTO",font.label = list(size = 12, color = "black", face = "bold", family = "Palatino Linotype"))
+pOrr.all2
+
+
+```
+
+
+## Boxplot correlations CD8 vs TCR | B cells vs BCR {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=10, fig.height=8}
+box_tcr_cd8 <- grid.draw(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","CD8cells","TCR_Richness",median,"median","CD8+ T cells infiltration","TCR Richness",-280,-245.0,rollSum=TRUE))
+box_tcr_cd8
+
+box_bcr_bcells <- TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","B_cells","BCR_Richness",median,"median","B cell infiltration","BCR Richness",-310.3,-265.0,rollSum=TRUE)
+# box_bcr_bcells
+
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=10, fig.height=8}
+
+
+box.tcr.bcr <- ggdraw() + 
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","CD8cells","TCR_Richness",median,"median","CD8+ T cells infiltration","TCR Richness",-910,-750.0,rollSum=TRUE),x = 0, y = 0.5, width = 1, height = 0.5) +
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","B_cells","BCR_Richness",median,"median","B cell infiltration","BCR Richness",-820,-680.0,rollSum=TRUE),x = 0, y = 0.001, width = 1, height = 0.5) +
+  draw_plot_label(label = c("A", "B"), size = 15,
+                  x = c(0, 0), y = c(1, 0.5),family="Palatino Linotype")
+
+
+```
+
+### TCR vs CD8/GEP | BCR vs B cells
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=19}
+
+box.tcr.bcr <- ggdraw() + 
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","CD8cells","TCR_Richness",median,"median","CD8+ T cells infiltration","TCR Richness",-.04,-.00001,logY=FALSE, segm = c(250,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0.66, width = 1, height = 0.33) +
+   draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","TIS_sigscore","TCR_Richness",median,"median","T cell inflamed GEP","TCR Richness",-.04,-.00001,logY=FALSE, segm = c(250,500), ylims=c(0,1800), ticks = c(40,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0.33, width = 1, height = 0.33) +
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","B_cells","BCR_Richness",median,"median","B cells infiltration","BCR Richness",-.04,-.00001,logY=FALSE, segm = c(320,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0, width = 1, height = 0.33)  +
+  draw_plot_label(label = c("A", "B","C"), size = 15,
+                  x = c(0, 0, 0), y = c(1, 0.66,0.33),family="Palatino Linotype")
+
+box.tcr.bcr
+
+
+```
+
+### BCR vs CD8/GEP
+
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=25, fig.height=7}
+
+p.bcr <-ggdraw() + 
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","CD8cells","BCR_Richness",median,"median","CD8+ T cells infiltration","BCR Richness",-.04,-.00001,logY=FALSE, segm = c(340,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0.5, width = 1, height = 0.49) +
+   draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","TIS_sigscore","BCR_Richness",median,"median","T cell inflamed GEP","BCR Richness",-.04,-.00001,logY=FALSE, segm = c(340,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0, width = 1, height = 0.49) +
+  draw_plot_label(label = c("A", "B"), size = 15,
+                  x = c(0, 0), y = c(1, 0.5),family="Palatino Linotype")
+                                     
+p.bcr
+
+
+
+p.bcr_h <-ggdraw() + 
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","CD8cells","BCR_Richness",median,"median","CD8+ T cells infiltration","BCR Richness",-.04,-.00001,logY=FALSE, segm = c(340,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),
+            x = 0, y = 0, width = 0.49, height = 1) +
+   draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","TIS_sigscore","BCR_Richness",median,"median","T cell inflamed GEP","BCR Richness",-.04,-.00001,logY=FALSE, segm = c(340,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),
+             x = 0.5, y = 0, width = 0.49, height = 1) +
+  draw_plot_label(label = c("A", "B"), size = 16,
+                  x = c(0, 0.5), y = c(1, 1),family="Palatino Linotype")
+                                     
+p.bcr_h
+
+```
+
+Using complete data across BCR, TCR, CD8, GEP and Bcells:
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=13}
+
+
+p.bcr2 <- ggdraw() + 
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","CD8cells","BCR_Richness",median,"median","CD8+ T cells infiltration","BCR Richness",-.04,-.00001,logY=FALSE, segm = c(340,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0.5, width = 1, height = 0.49) +
+   draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","TIS_sigscore","BCR_Richness",median,"median","T cell inflamed GEP","BCR Richness",-.04,-.00001,logY=FALSE, segm = c(340,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE,filterBY = c("BCR_Richness","TCR_Richness","CD8cells","TIS_sigscore","B_cells")),x = 0, y = 0, width = 1, height = 0.49) +
+  draw_plot_label(label = c("A", "B"), size = 15,
+                  x = c(0, 0), y = c(1, 0.5),family="Palatino Linotype")
+
+p.bcr2
+
+```
+
+
+# SUPPLEMENTAL FILE 1: Biomarkers pairwise Spearman's correlations- pancancer, multicancer, individual cohorts
+
+Correlation tables with significance results for:
+
+1. global
+2. multicancer
+3. separate histologies
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+
+# Individual correlations
+
+formCors.sep <- sapply(mycancertypes.final, function(x) formatted_cors(tcgaData.tp.sub.filt %>% dplyr::filter(project ==x) %>% 
+  dplyr::select(all_of(featuresIn)) %>% setNames(featuresInLabels), methodSel = NULL), simplify = FALSE)
+formCors.sep <- ldply(formCors.sep)
+
+formCors.sep$measure2 <- gsub('\\.\\.',"+ ",formCors.sep$measure2 )
+formCors.sep$measure2 <- gsub('\\.'," ",formCors.sep$measure2 )
+formCors.sep$measure2 <- ifelse(formCors.sep$measure2=="PD L1 expression","PD-L1 expression",
+                            ifelse(formCors.sep$measure2=="T cell inflamed GEP","T-cell inflamed GEP",
+                                   ifelse(formCors.sep$measure2=="CD8+ T cells infiltration","CD8+ T-cells infiltration",
+                                          ifelse(formCors.sep$measure2=="CD4+ T cells infiltration","CD4+ T-cells infiltration",formCors.sep$measure2))))
+
+# Spearman's rho rank correlation coefficients for all possible pairs of columns of a matrix
+# Ranks are computed using efficient algorithms
+formCors.gb %>% head()
+formCors.ml %>% head()
+formCors.sep %>% head()
+
+newColnames <- c("Biomarker 1", "Biomarker 2", "Spearman's rho correlation", "N (observations)", "P-value")
+
+formCors.gb<- formCors.gb %>%
+  dplyr::select(all_of(c("measure1","measure2","r","n","P"))) %>% 
+  setNames(newColnames)
+
+
+formCors.ml<- formCors.ml %>%
+  dplyr::select(all_of(c("measure1","measure2","r","n","P"))) %>% 
+  setNames(newColnames)
+
+
+formCors.sep<- formCors.sep %>%
+  dplyr::select(all_of(c(".id","measure1","measure2","r","n","P"))) %>% 
+  setNames(c("TCGA cohort",newColnames))
+#Pairs with fewer than 2 non-missing values have the r values set to NA
+# Uses midranks in case of ties, as described by Hollander and Wolfe. P-values are approximated by using the t or F distributions.
+
+```
+
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+
+##################
+headerStyle1 <- createStyle(
+  fontSize = 11, fontColour = "black",
+  fgFill = NULL, halign = "left",textDecoration = "bold"
+)
+
+TitleStyle1 <- createStyle(
+  fontSize = 14, fontColour = "black",
+  fgFill = NULL, halign = "left",textDecoration = NULL
+)
+
+
+TitleStyle2 <- createStyle(
+  fontSize = 12, fontColour = "black",
+  fgFill = NULL, halign = "left",textDecoration = "bold"
+)
+
+
+TitleStyle3 <- createStyle(
+  fontSize = 11, fontColour = "black",
+  fgFill = NULL, halign = "left",textDecoration = NULL
+)
+
+
+wb <- createWorkbook()
+
+# PANCANCER
+addWorksheet(wb, "Pan-cancer")
+writeData(wb, "Pan-cancer", "Supplementary table 1. Biomarkers pairwise Spearman's correlations", startCol = 1, startRow = 1)
+addStyle(wb = wb, sheet = 1, rows = 1, cols = 1, style = TitleStyle1)
+# Second
+writeData(wb, "Pan-cancer","PAN-CANCER", startCol = 1, startRow = 3)
+addStyle(wb = wb, sheet = 1, rows = 3, cols = 1, style = TitleStyle2)
+writeData(wb, "Pan-cancer","Assymptotic P-values are shown, apptoximated by using the t or F distributions", startCol = 1, startRow = 4)
+addStyle(wb = wb, sheet = 1, rows = 4, cols = 1, style = TitleStyle3)
+writeData(wb, "Pan-cancer","Pairs with fewer than 2 non-missing values have the Spearman's r values set to NA", startCol = 1, startRow = 5)
+addStyle(wb = wb, sheet = 1, rows = 5, cols = 1, style = TitleStyle3)
+# Write table with data
+writeData(wb, "Pan-cancer", formCors.gb %>% as.data.frame(), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+## MULTICANCER
+addWorksheet(wb, "Multicancer")
+writeData(wb, "Multicancer", "Supplementary table 1. Biomarkers pairwise Spearman's correlations", startCol = 1, startRow = 1)
+addStyle(wb = wb, sheet = 2, rows = 1, cols = 1, style = TitleStyle1)
+# Second
+writeData(wb, "Multicancer","MULTI-CANCER", startCol = 1, startRow = 3)
+addStyle(wb = wb, sheet = 2, rows = 3, cols = 1, style = TitleStyle2)
+writeData(wb, "Multicancer","Assymptotic P-values are shown, apptoximated by using the t or F distributions", startCol = 1, startRow = 4)
+addStyle(wb = wb, sheet = 2, rows = 4, cols = 1, style = TitleStyle3)
+writeData(wb, "Multicancer","Pairs with fewer than 2 non-missing values have the Spearman's r values set to NA", startCol = 1, startRow = 5)
+addStyle(wb = wb, sheet = 2, rows = 5, cols = 1, style = TitleStyle3)
+# Write table with data
+writeData(wb, "Multicancer", formCors.ml %>% as.data.frame(), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+## INDIVIDUAL
+addWorksheet(wb, "Individual cohorts")
+writeData(wb, "Individual cohorts", "Supplementary table 1. Biomarkers pairwise Spearman's correlations", startCol = 1, startRow = 1)
+addStyle(wb = wb, sheet = 3, rows = 1, cols = 1, style = TitleStyle1)
+# Second
+writeData(wb, "Individual cohorts","INDIVIDUAL TCGA COHORTS (multicancer)", startCol = 1, startRow = 3)
+addStyle(wb = wb, sheet = 3, rows = 3, cols = 1, style = TitleStyle2)
+writeData(wb, "Individual cohorts","Assymptotic P-values are shown, apptoximated by using the t or F distributions", startCol = 1, startRow = 4)
+addStyle(wb = wb, sheet = 3, rows = 4, cols = 1, style = TitleStyle3)
+writeData(wb, "Pan-cancer","Pairs with fewer than 2 non-missing values have the Spearman's r values set to NA", startCol = 1, startRow = 5)
+addStyle(wb = wb, sheet = 3, rows = 5, cols = 1, style = TitleStyle3)
+# Write table with data
+writeData(wb, "Individual cohorts", formCors.sep %>% as.data.frame(), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+saveWorkbook(wb,paste0(projectOutDataPath,"/","Supplemental File 1.xlsx"), overwrite = TRUE)
+
+```
+
+
+
+# Gene ontology specific BPs
+
+Extract GO BP annotation for specific processes and all their child processes
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hold', eval=TRUE}
+# Annotation of GO Identifiers to their Biological Process Offspring
+lumphActiv <- c("GO:0002285",get("GO:0002285", GOBPOFFSPRING))
+agPresent <- c("GO:0019882",get("GO:0019882", GOBPOFFSPRING))
+igProd <- c("GO:0002377",get("GO:0002377", GOBPOFFSPRING))
+ifng.a <- c("GO:0034341",get("GO:0034341", GOBPOFFSPRING))
+ifng.b <- c("GO:0032609",get("GO:0032609", GOBPOFFSPRING))
+AgSignaling <- c("GO:0050851", get("GO:0050851",GOBPOFFSPRING))#
+
+
+bp_ImmuneRelated.focused <- list(#"T cell activation" = tCellActiv,
+                                 "Lymphocyte activation involved in immune response" = lumphActiv,
+                                 "Antigen processing and presentation" = agPresent,
+                                 "Antigen receptor mediated signaling" = AgSignaling,
+                                 "Immunoglobulin production" = igProd,
+                                 "Response to type II interferon" = ifng.a,
+                                 "Type II interferon production" = ifng.b#,
+                                 # "B cell immunity"=bcellImmunity,
+                                 # "T cell immunity"=tcellImmunity
+                                 )
+
+bp_ImmuneRelated.focused <- sapply(bp_ImmuneRelated.focused, function(x) as.data.frame(x), simplify=FALSE)
+
+bp_ImmuneRelated.focused.DF <- ldply(bp_ImmuneRelated.focused)
+colnames(bp_ImmuneRelated.focused.DF) <- c("Parent Description","ID")
+
+
+```
+
+
+# GO BCR high vs BCR low samples {.tabset .tabset-fade .tabset-pills}
+
+## LFC = 0 {.tabset .tabset-fade .tabset-pills}
+
+Load GO ORA results
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hold', eval=TRUE}
+newCol <- "BCR"
+suffix <- paste0("_",newCol)
+
+```
+
+Only upregulated
+
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+## MELANOMA
+skcm.res = get_geneLists(DEA_GOoutData,paste0("SKCM.Degs.dataset_lfc0",suffix), lfcThres=0)
+## RCC
+kirc.res = get_geneLists(DEA_GOoutData,paste0("KIRC.Degs.dataset_lfc0",suffix), lfcThres=0)
+## BLADDER
+blca.res = get_geneLists(DEA_GOoutData,paste0("BLCA.Degs.dataset_lfc0",suffix), lfcThres=0)
+## GASTRIC
+stad.res = get_geneLists(DEA_GOoutData,paste0("STAD.Degs.dataset_lfc0",suffix), lfcThres=0)
+
+## All together
+
+go.all <- sapply(list("SKCM"=skcm.res,"KIRC"=kirc.res,"BLCA" = blca.res, "STAD" = stad.res), function(x) x[[3]], simplify = FALSE )
+go.all.DF <- ldply(go.all)
+go.all.DF.up <- go.all.DF %>% dplyr::filter(group=="upregulated")
+# 
+# skcm_genes <- loadRData(paste0(DEA_GOoutData,"/geneBackground","_SKCM",Rdata.suffix))
+# blca_genes <- loadRData(paste0(DEA_GOoutData,"/geneBackground","_BLCA",Rdata.suffix))
+# kirc_genes <- loadRData(paste0(DEA_GOoutData,"/geneBackground","_KIRC",Rdata.suffix))
+# stad_genes <- loadRData(paste0(DEA_GOoutData,"/geneBackground","_STAD",Rdata.suffix))
+
+```
+
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+# 
+# 
+# ## Separate histologies
+# if(isTRUE(runClean)){
+# 
+#   bp <- sapply(go.all, function(x) enrichGO(x$gene, ont="BP", OrgDb = 'org.Hs.eg.db',keyType = "SYMBOL",pAdjustMethod = "BH", universe=skcm_genes,
+#                             pvalueCutoff  = 0.05,
+#                             qvalueCutoff = 0.05,minGSSize=5), simplify = FALSE)
+#   save(bp,file=paste0(DEA_GOoutData,"bpGO_allTCGA_res",suffix,Rdata.suffix))
+# }else{
+#   bp_bcr_0<- loadRData(paste0(DEA_GOoutData,"bpGO_allTCGA_res",suffix,Rdata.suffix))
+# }
+
+```
+
+### Enrichment results 
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+# Load GO enrichment results
+bp_bcr_0<- loadRData(paste0(DEA_GOoutData,"bpGO_allTCGA_res",suffix,Rdata.suffix))
+## Drop GO terms not included in our focused GO terms set,
+bp_bcr_0.filt <- sapply(bp_bcr_0, function(x) dropGO(x, level = NULL, term = setdiff(x %>% as.data.frame() %>% pull(ID),bp_ImmuneRelated.focused.DF$ID)), simplify = FALSE)
+
+# Then Similarity analysis on reduced terms
+if(isTRUE(runFiltSim)){
+  bp_bcr_0.filt.red <- sapply(bp_bcr_0.filt, function(x) simplify(x, cutoff=0.45, by="p.adjust", select_fun=min, measure="Wang"), simplify = FALSE)
+  save(bp_bcr_0.filt.red,file=paste0(DEA_GOoutData,"bpGO_allTCGA_res_filt_reduced",suffix,Rdata.suffix))
+## REMEMBER: The higher the threshold, the more the redundant terms are removed
+}else{
+  bp_bcr_0.filt.red <- loadRData(paste0(DEA_GOoutData,"bpGO_allTCGA_res_filt_reduced",suffix,Rdata.suffix))
+
+}
+
+```
+
+
+### Reduced filtered BPs
+
+```{r,warning=F, message=F,fig.width=25, fig.height=8,fig.show = 'hold', eval=TRUE}
+
+
+bp_bcr_0.filt.red.DFs <- sapply(bp_bcr_0.filt.red, function(x) x %>% as.data.frame() %>% 
+    dplyr::select(-geneID) %>% 
+    dplyr::mutate(category=bp_ImmuneRelated.focused.DF$`Parent Description`[match(ID,bp_ImmuneRelated.focused.DF$ID)]) %>%
+    dplyr::mutate("GeneRatio"=parse_ratio(GeneRatio)), simplify=FALSE)
+
+
+bp_bcr_0.filt.red.merged <- ldply(bp_bcr_0.filt.red.DFs)
+
+
+bubble_bcr.cancers.filt.red <- sapply(bp_bcr_0.filt.red.DFs , function(x) GO_bubblePlot(DF=x,
+              sortVar="GeneRatio",xVar="GeneRatio",yVar="Description",sizeVar="Count",fillVar="p.adjust", aggreg=FALSE,choosePlot="norm",sizeMin=2,sizeMax=182, xMax=ceiling_dec(max(bp_bcr_0.filt.red.merged$GeneRatio),2), seqN=10, fillMax=max(bp_bcr_0.filt.red.merged$p.adjust)), simplify = FALSE)
+pBub_bcr_0.filt.red <-ggarrange(plotlist = bubble_bcr.cancers.filt.red, 
+          nrow=1, ncol=4, labels = c("SKCM", "KIRC", "BLCA", "STAD"),font.label = list(size = 14, color = "black", face = "bold", family = "Palatino Linotype"), common.legend = T, legend = "bottom")
+
+pBub_bcr_0.filt.red
+
+
+```
+
+### SUPPLEMENTAL FILE 3: GO enrichment & similarity
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+
+go_description <-get_names(bp_ImmuneRelated.focused.DF$ID)
+
+bps_filtered_df <- bp_ImmuneRelated.focused.DF
+bps_filtered_df$`BP Offspring Term description` <- go_description$go_name
+colnames(bps_filtered_df)[1]<- "BP Term description"
+#################
+
+##################
+headerStyle1 <- createStyle(
+  fontSize = 11, fontColour = "black",
+  fgFill = NULL, halign = "left",textDecoration = "bold"
+)
+
+TitleStyle1 <- createStyle(
+  fontSize = 14, fontColour = "black",
+  fgFill = NULL, halign = "left",textDecoration = NULL
+)
+
+
+TitleStyle2 <- createStyle(
+  fontSize = 12, fontColour = "black",
+  fgFill = NULL, halign = "left",textDecoration = "bold"
+)
+
+
+TitleStyle3 <- createStyle(
+  fontSize = 11, fontColour = "black",
+  fgFill = NULL, halign = "left",textDecoration = NULL
+)
+
+var <- c("SKCM", "KIRC", "BLCA", "STAD")
+
+wb <- createWorkbook()
+
+addWorksheet(wb, "Focused BPs")
+writeData(wb, "Focused BPs", "Supplementary table 3. Gene ontology biological processes (BP) focused set, including annotations of all GO annotation offsprings", startCol = 1, startRow = 1)
+addStyle(wb = wb, sheet = 1, rows = 1, cols = 1, style = TitleStyle1)
+# Second
+writeData(wb, "Focused BPs","GO Biological processes:", startCol = 1, startRow = 3)
+addStyle(wb = wb, sheet = 1, rows = 3, cols = 1, style = TitleStyle2)
+writeData(wb, "Focused BPs",paste(paste0(seq(1:6),". ",unique(bps_filtered_df$`BP Term description`)), collapse=", "), startCol = 1, startRow = 4)
+addStyle(wb = wb, sheet = 1, rows = 4, cols = 1, style = TitleStyle3)
+# Write table woth data
+writeData(wb, "Focused BPs", bps_filtered_df, startCol = 1, startRow = 6, rowNames = FALSE,headerStyle = headerStyle1)
+
+condition="BCR-"
+for(i in seq(1:4)){
+  # i=1
+  # Create sheet
+  addWorksheet(wb, paste0(condition,var[i]))
+  # Start writing title
+  # First
+  writeData(wb, sheet=paste0(condition,var[i]), "Supplementary table 3. Gene ontology biological processes associated with the differentially upregulated genes in BCR Richness high samples compared to BCR Richness low samples", startCol = 1, startRow = 1)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 1, cols = 1, style = TitleStyle1)
+  # Second
+  writeData(wb, sheet=paste0(condition,var[i]), paste0(var[i]," - GO BIOLOGICAL PROCESSES WITH A SIGNIFICANT ASSOCIATION TO THE UPREGULATED GENES (FDR<0.05) "), startCol = 1, startRow = 3)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 3, cols = 1, style = TitleStyle2)
+  # Third
+  writeData(wb, sheet=paste0(condition,var[i]), "Adjusted p-value cutoff of enrichment test set to 0.05, method of adjustment used Benjamini-Hochberg", startCol = 1, startRow = 4)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]),  rows = 4, cols = 1, style = TitleStyle3)
+  # Fourth
+  writeData(wb, sheet=paste0(condition,var[i]), "Q-value cutoff of enrichment tests to report as significant set to 0.05. ", startCol = 1, startRow = 5)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 5, cols = 1, style = TitleStyle3)
+  # Write table woth data
+  writeData(wb, paste0(condition,var[i]), bp_bcr_0[[i]], startCol = 1, startRow = 7, rowNames = TRUE,headerStyle = headerStyle1)
+
+}
+
+saveWorkbook(wb,paste0(projectOutDataPath,"/","Supplemental File 3.xlsx"), overwrite = TRUE)
+
+```
+
+
+### SUPPLEMENTAL FILE 2: DEA
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+
+
+columnsDEGs <- c("Symbol","Ensembl_ID","Entrez_ID", "baseMean", "FC","lfcSE", "pvalue"      , "padj")
+
+selectCols <- c("gene","ensembl","entrez","baseMean", "FC","lfcSE", "pvalue","padj")
+
+
+########################################
+var <- c("SKCM", "KIRC", "BLCA", "STAD")
+
+degs <- list(skcm.res, kirc.res, blca.res, stad.res)
+wb <- createWorkbook()
+condition="BCR-"
+for(i in seq(1:4)){
+  # i=1
+  # Create sheet
+  addWorksheet(wb, paste0(condition,var[i]))
+  # Start writing title
+  # First
+  writeData(wb, sheet=paste0(condition,var[i]), "Supplementary table 2. Differentially expressed genes in BCR Richness high samples compared to BCR Richness low samples", startCol = 1, startRow = 1)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 1, cols = 1, style = TitleStyle1)
+  # Second
+  writeData(wb, sheet=paste0(condition,var[i]), paste0(var[i]," - DIFFERENTIALLY EXPRESSED GENES (FDR<0.05) "), startCol = 1, startRow = 3)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 3, cols = 1, style = TitleStyle2)
+  # Third
+  writeData(wb, sheet=paste0(condition,var[i]), "Adjusted p-value cutoff (FDR) set to 0.05, method of adjustment used Benjamini-Hochberg", startCol = 1, startRow = 4)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]),  rows = 4, cols = 1, style = TitleStyle3)
+  # Fourth
+  writeData(wb, sheet=paste0(condition,var[i]), "apeglm estimator used for the log2 fold change (LFC) shrinkage and DESeq2 R package used for the differential expression analysis", startCol = 1, startRow = 5)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 5, cols = 1, style = TitleStyle3)
+  # Write table woth data
+  writeData(wb, paste0(condition,var[i]), degs[[i]]$gL.df %>%
+              dplyr::select(all_of(selectCols)) %>%
+              setNames(columnsDEGs), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+}
+
+
+saveWorkbook(wb,paste0(projectOutDataPath,"/","Supplemental File 2.xlsx"), overwrite = TRUE)
+
+```
+
+
+
+# GO PDL1 high vs PDL1 low samples {.tabset .tabset-fade .tabset-pills}
+
+## LFC = 0 {.tabset .tabset-fade .tabset-pills}
+
+Load GO ORA results
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hold', eval=TRUE}
+newCol <- "PD1L1"
+suffix <- paste0("_",newCol)
+
+```
+
+Only upregulated
+
+
+
+### Enrichment results 
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+#Loading enrichment results
+bp_pdl1<- loadRData(paste0(DEA_GOoutData,"bpGO_allTCGA_res",suffix,Rdata.suffix))
+## Drop GO terms not included in our focused GO terms set,
+bp_pdl1.filt <- sapply(bp_pdl1, function(x) dropGO(x, level = NULL, term = setdiff(x %>% as.data.frame() %>% pull(ID),bp_ImmuneRelated.focused.DF$ID)), simplify = FALSE)
+
+
+if(isTRUE(runFiltSim)){
+  # Then Similarity analysis on reduced terms
+  bp_pdl1.filt.red <- sapply(bp_pdl1.filt, function(x) simplify(x, cutoff=0.45, by="p.adjust", select_fun=min, measure="Wang"), simplify = FALSE)
+## REMEMBER: The higher the threshold, the more the redundant terms are removed
+  save(bp_pdl1.filt.red,file=paste0(DEA_GOoutData,"bpGO_allTCGA_res_filt_reduced",suffix,Rdata.suffix))
+}else{
+  bp_pdl1.filt.red <- loadRData(paste0(DEA_GOoutData,"bpGO_allTCGA_res_filt_reduced",suffix,Rdata.suffix))
+
+}
+
+```
+
+
+
+### Reduced filtered BPs
+
+```{r,warning=F, message=F, fig.width=35, fig.height=12,fig.show = 'hold', eval=TRUE}
+bp_pdl1.filt.red.DFs <- sapply(bp_pdl1.filt.red, function(x) x %>% as.data.frame() %>% 
+    dplyr::select(-geneID) %>% 
+    dplyr::mutate(category=bp_ImmuneRelated.focused.DF$`Parent Description`[match(ID,bp_ImmuneRelated.focused.DF$ID)]) %>%
+    dplyr::mutate("GeneRatio"=parse_ratio(GeneRatio)), simplify=FALSE)
+
+
+bp_pdl1.filt.red.merged <- ldply(bp_pdl1.filt.red.DFs)
+
+
+max(bp_pdl1.filt.red.DFs$SKCM$GeneRatio,bp_pdl1.filt.red.DFs$KIRC$GeneRatio,bp_pdl1.filt.red.DFs$BLCA$GeneRatio,bp_pdl1.filt.red.DFs$STAD$GeneRatio)
+
+min(bp_pdl1.filt.red.DFs$SKCM$GeneRatio,bp_pdl1.filt.red.DFs$KIRC$GeneRatio,bp_pdl1.filt.red.DFs$BLCA$GeneRatio,bp_pdl1.filt.red.DFs$STAD$GeneRatio)
+
+bubble_pdl1.cancers.filt.red <- sapply(bp_pdl1.filt.red.DFs , function(x) GO_bubblePlot(DF=x,
+              sortVar="GeneRatio",xVar="GeneRatio",yVar="Description",sizeVar="Count",fillVar="p.adjust", aggreg=FALSE,choosePlot="norm",sizeMin=2,sizeMax=182, xMax=ceiling_dec(max(bp_pdl1.filt.red.merged$GeneRatio),2), seqN=10, fillMax=max(bp_pdl1.filt.red.merged$p.adjust)), simplify = FALSE)
+
+pBub_pdl1.filt.red <-ggarrange(plotlist = bubble_pdl1.cancers.filt.red , 
+          nrow=1, ncol=4, labels = c("SKCM", "KIRC", "BLCA", "STAD"),font.label = list(size = 14, color = "black", face = "bold", family = "Palatino Linotype"), common.legend = T, legend = "bottom")
+
+pBub_pdl1.filt.red
+```
+
+
+
+### SUPPLEMENTAL FILE 3: GO enrichment & similarity
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+
+wb <- loadWorkbook(paste0(projectOutDataPath,"/","Supplemental File 3.xlsx"))
+condition="PDL1-"
+for(i in seq(1:4)){
+  # i=1
+  # Create sheet
+  addWorksheet(wb, paste0(condition,var[i]))
+  # Start writing title
+  # First
+  writeData(wb, sheet=paste0(condition,var[i]), "Supplementary table 3. Gene ontology biological processes associated with the differentially upregulated genes in PD-L1 expression high samples compared to PD-L1 expression low samples", startCol = 1, startRow = 1)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 1, cols = 1, style = TitleStyle1)
+  # Second
+  writeData(wb, sheet=paste0(condition,var[i]), paste0(var[i]," - GO BIOLOGICAL PROCESSES WITH A SIGNIFICANT ASSOCIATION TO THE UPREGULATED GENES (FDR<0.05) "), startCol = 1, startRow = 3)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 3, cols = 1, style = TitleStyle2)
+  # Third
+  writeData(wb, sheet=paste0(condition,var[i]), "Adjusted p-value cutoff of enrichment test set to 0.05, method of adjustment used Benjamini-Hochberg", startCol = 1, startRow = 4)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]),  rows = 4, cols = 1, style = TitleStyle3)
+  # Fourth
+  writeData(wb, sheet=paste0(condition,var[i]), "Q-value cutoff of enrichment tests to report as significant set to 0.05. ", startCol = 1, startRow = 5)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 5, cols = 1, style = TitleStyle3)
+  # Write table woth data
+  writeData(wb, paste0(condition,var[i]), bp_pdl1[[i]] %>% as.data.frame(), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+}
+
+saveWorkbook(wb,paste0(projectOutDataPath,"/","Supplemental File 3.xlsx"), overwrite = TRUE)
+
+```
+
+
+### SUPPLEMENTAL FILE 2: DEA
+
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+columnsDEGs <- c("Symbol","Ensembl_ID","Entrez_ID", "baseMean", "FC","lfcSE", "pvalue"      , "padj")
+
+selectCols <- c("gene","ensembl","entrez","baseMean", "FC","lfcSE", "pvalue","padj")
+
+
+wb <- loadWorkbook(paste0(projectOutDataPath,"/","Supplemental File 2.xlsx"))
+degs <- list(skcm.res, kirc.res, blca.res, stad.res)
+condition="PDL1-"
+for(i in seq(1:4)){
+  # i=1
+  # Create sheet
+  addWorksheet(wb, paste0(condition,var[i]))
+  # Start writing title
+  # First
+  writeData(wb, sheet=paste0(condition,var[i]), "Supplementary table 2. Differentially expressed genes in PD-L1 expression high samples compared to PD-L1 expression low samples", startCol = 1, startRow = 1)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 1, cols = 1, style = TitleStyle1)
+  # Second
+  writeData(wb, sheet=paste0(condition,var[i]), paste0(var[i]," - DIFFERENTIALLY EXPRESSED GENES (FDR<0.05) "), startCol = 1, startRow = 3)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 3, cols = 1, style = TitleStyle2)
+  # Third
+  writeData(wb, sheet=paste0(condition,var[i]), "Adjusted p-value cutoff (FDR) set to 0.05, method of adjustment used Benjamini-Hochberg", startCol = 1, startRow = 4)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]),  rows = 4, cols = 1, style = TitleStyle3)
+  # Fourth
+  writeData(wb, sheet=paste0(condition,var[i]), "apeglm estimator used for the log2 fold change (LFC) shrinkage and DESeq2 R package used for the differential expression analysis", startCol = 1, startRow = 5)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 5, cols = 1, style = TitleStyle3)
+  # Write table woth data
+  writeData(wb, paste0(condition,var[i]), degs[[i]]$gL.df %>%
+              dplyr::select(all_of(selectCols)) %>%
+              setNames(columnsDEGs), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+}
+
+
+saveWorkbook(wb,paste0(projectOutDataPath,"/","Supplemental File 2.xlsx"), overwrite = TRUE)
+
+```
+
+
+# GO CD8 high vs CD8 low samples {.tabset .tabset-fade .tabset-pills}
+
+## LFC = 0 {.tabset .tabset-fade .tabset-pills}
+
+Load GO ORA results
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hold', eval=TRUE}
+newCol <- "CD8"
+suffix <- paste0("_",newCol)
+
+```
+
+Only upregulated
+
+
+### Enrichment results 
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+# Loading enrichment results
+bp_cd8<- loadRData(paste0(DEA_GOoutData,"bpGO_allTCGA_res",suffix,Rdata.suffix))
+## Drop GO terms not included in our focused GO terms set,
+bp_cd8.filt <- sapply(bp_cd8, function(x) dropGO(x, level = NULL, term = setdiff(x %>% as.data.frame() %>% pull(ID),bp_ImmuneRelated.focused.DF$ID)), simplify = FALSE)
+
+
+if(isTRUE(runFiltSim)){
+  # Then Similarity analysis on reduced terms
+  bp_cd8.filt.red <- sapply(bp_cd8.filt, function(x) simplify(x, cutoff=0.45, by="p.adjust", select_fun=min, measure="Wang"), simplify = FALSE)
+## REMEMBER: The higher the threshold, the more the redundant terms are removed
+  save(bp_cd8.filt.red,file=paste0(DEA_GOoutData,"bpGO_allTCGA_res_filt_reduced",suffix,Rdata.suffix))
+
+}else{
+  bp_cd8.filt.red <- loadRData(paste0(DEA_GOoutData,"bpGO_allTCGA_res_filt_reduced",suffix,Rdata.suffix))
+
+}
+
+```
+
+
+### Reduced filtered BPs
+
+
+```{r,warning=F, message=F, fig.width=35, fig.height=12,fig.show = 'hold', eval=TRUE}
+bp_cd8.filt.red.DFs <- sapply(bp_cd8.filt.red, function(x) x %>% as.data.frame() %>% 
+    dplyr::select(-geneID) %>% 
+    dplyr::mutate(category=bp_ImmuneRelated.focused.DF$`Parent Description`[match(ID,bp_ImmuneRelated.focused.DF$ID)]) %>%
+    dplyr::mutate("GeneRatio"=parse_ratio(GeneRatio)), simplify=FALSE)
+
+
+bp_cd8.filt.red.merged <- ldply(bp_cd8.filt.red.DFs)
+
+
+bubble_cd8.cancers.filt.red <- sapply(bp_cd8.filt.red.DFs , function(x) GO_bubblePlot(DF=x,
+              sortVar="GeneRatio",xVar="GeneRatio",yVar="Description",sizeVar="Count",fillVar="p.adjust", aggreg=FALSE,choosePlot="norm",sizeMin=2,sizeMax=182, xMax=ceiling_dec(max(bp_cd8.filt.red.merged$GeneRatio),2), seqN=10, fillMax=max(bp_cd8.filt.red.merged$p.adjust)), simplify = FALSE)
+
+pBub_cd8.filt.red <-ggarrange(plotlist = bubble_cd8.cancers.filt.red , 
+          nrow=1, ncol=4, labels = c("SKCM", "KIRC", "BLCA", "STAD"),font.label = list(size = 14, color = "black", face = "bold", family = "Palatino Linotype"), common.legend = T, legend = "bottom")
+
+pBub_cd8.filt.red
+```
+
+
+
+### SUPPLEMENTAL FILE 3: GO enrichment & similarity
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+
+
+wb <- loadWorkbook(paste0(projectOutDataPath,"/","Supplemental File 3.xlsx"))
+condition="CD8-"
+for(i in seq(1:4)){
+  # i=1
+  # Create sheet
+  addWorksheet(wb, paste0(condition,var[i]))
+  # Start writing title
+  # First
+  writeData(wb, sheet=paste0(condition,var[i]), "Supplementary table 3. Gene ontology biological processes associated with the differentially upregulated genes in CD8+ T-cells infiltration high samples compared to CD8+ T-cells infiltration low samples", startCol = 1, startRow = 1)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 1, cols = 1, style = TitleStyle1)
+  # Second
+  writeData(wb, sheet=paste0(condition,var[i]), paste0(var[i]," - GO BIOLOGICAL PROCESSES WITH A SIGNIFICANT ASSOCIATION TO THE UPREGULATED GENES (FDR<0.05) "), startCol = 1, startRow = 3)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 3, cols = 1, style = TitleStyle2)
+  # Third
+  writeData(wb, sheet=paste0(condition,var[i]), "Adjusted p-value cutoff of enrichment test set to 0.05, method of adjustment used Benjamini-Hochberg", startCol = 1, startRow = 4)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]),  rows = 4, cols = 1, style = TitleStyle3)
+  # Fourth
+  writeData(wb, sheet=paste0(condition,var[i]), "Q-value cutoff of enrichment tests to report as significant set to 0.05. ", startCol = 1, startRow = 5)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 5, cols = 1, style = TitleStyle3)
+  # Write table woth data
+  writeData(wb, paste0(condition,var[i]), bp_cd8[[i]] %>% as.data.frame(), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+}
+
+saveWorkbook(wb,paste0(projectOutDataPath,"/","Supplemental File 3.xlsx"), overwrite = TRUE)
+
+```
+
+
+### SUPPLEMENTAL FILE 2: DEA
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+columnsDEGs <- c("Symbol","Ensembl_ID","Entrez_ID", "baseMean", "FC","lfcSE", "pvalue"      , "padj")
+
+selectCols <- c("gene","ensembl","entrez","baseMean", "FC","lfcSE", "pvalue","padj")
+
+
+
+wb <- loadWorkbook(paste0(projectOutDataPath,"/","Supplemental File 2.xlsx"))
+degs <- list(skcm.res, kirc.res, blca.res, stad.res)
+condition="CD8-"
+for(i in seq(1:4)){
+  # i=1
+  # Create sheet
+  addWorksheet(wb, paste0(condition,var[i]))
+  # Start writing title
+  # First
+  writeData(wb, sheet=paste0(condition,var[i]), "Supplementary table 2. Differentially expressed genes in CD8+ T-cells infiltration high samples compared to CD8+ T-cells infiltration samples", startCol = 1, startRow = 1)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 1, cols = 1, style = TitleStyle1)
+  # Second
+  writeData(wb, sheet=paste0(condition,var[i]), paste0(var[i]," - DIFFERENTIALLY EXPRESSED GENES (FDR<0.05) "), startCol = 1, startRow = 3)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 3, cols = 1, style = TitleStyle2)
+  # Third
+  writeData(wb, sheet=paste0(condition,var[i]), "Adjusted p-value cutoff (FDR) set to 0.05, method of adjustment used Benjamini-Hochberg", startCol = 1, startRow = 4)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]),  rows = 4, cols = 1, style = TitleStyle3)
+  # Fourth
+  writeData(wb, sheet=paste0(condition,var[i]), "apeglm estimator used for the log2 fold change (LFC) shrinkage and DESeq2 R package used for the differential expression analysis", startCol = 1, startRow = 5)
+  addStyle(wb = wb, sheet=paste0(condition,var[i]), rows = 5, cols = 1, style = TitleStyle3)
+  # Write table woth data
+  writeData(wb, paste0(condition,var[i]), degs[[i]]$gL.df %>%
+              dplyr::select(all_of(selectCols)) %>%
+              setNames(columnsDEGs), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+}
+
+
+saveWorkbook(wb,paste0(projectOutDataPath,"/","Supplemental File 2.xlsx"), overwrite = TRUE)
+```
+
+
+
+# FIGURE 1
+
+Figure 1 was produced using Visio.
+
+# FIGURE 2 : Correlations Intra & Inter {.tabset .tabset-fade .tabset-pills}
+
+## Correlation Networks with clusters
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=18, fig.height=20}
+global.net$layers[[3]]$aes_params$family <- "Palatino Linotype"
+global.net$layers[[3]]$aes_params$size <- 5
+multi.net$layers[[3]]$aes_params$family <- "Palatino Linotype"
+multi.net$layers[[3]]$aes_params$size <- 5
+
+full_netClusters_v <- ggarrange(plotlist = list(global.net, multi.net), nrow=2,common.legend = TRUE, legend="bottom",labels = c("A. Pancancer", "B. Multicancer"),font.label = list(size = 15, color = "black", face = "bold", family = "Palatino Linotype"))
+
+
+
+box.tcr.bcr <- ggdraw() + 
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","CD8cells","TCR_Richness",median,"median","CD8+ T cells infiltration","TCR Richness",-.04,-.00001,logY=FALSE, segm = c(250,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0.66, width = 1, height = 0.34) +
+   draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","TIS_sigscore","TCR_Richness",median,"median","T cell inflamed GEP","TCR Richness",-.04,-.00001,logY=FALSE, segm = c(250,500), ylims=c(0,1800), ticks = c(40,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0.33, width = 1, height = 0.34) +
+  draw_plot(TwosigScores_boxplot_tcga(tcgaData.tp.sub.filt,mycancertypes.reduced,"project","B_cells","BCR_Richness",median,"median","B cells infiltration","BCR Richness",-.04,-.00001,logY=FALSE, segm = c(320,500), ylims=c(0,1800), ticks = c(50,300),relHeights = c(1,0,.4),rollSum=TRUE),x = 0, y = 0, width = 1, height = 0.34)  +
+  draw_plot_label(label = c("C.", "D.","E."), size = 15,
+                  x = c(0, 0, 0), y = c(1, 0.66,0.33),family="Palatino Linotype")
+
+
+
+fig2.1 <-ggarrange(plotlist = list(full_netClusters_v, box.tcr.bcr), ncol=2,common.legend = FALSE,  
+          widths = c(1, 1.5), heights = c(1,2), align="h")#labels = c("", ""),font.label = list(size = 12, color = 
+
+fig2.1
+
+cairo_pdf(filename = paste0(figuresPath,"Figure 2",".pdf"),width = 18, height=20)
+  print(fig2.1)
+dev.off()
+
+# 
+# ggsave(fig2.1, filename = paste0(figuresPath,"Fig2.v1",".tiff"), dpi = 600,width = 18, height=19.5, 
+#        units = "in")
+
+
+```
+
+
+# SUPPLEMENTAL FIGURE 1 (FILE 5): TCR richness correlation with Shannon entropy and evenness in TCGA
+
+Produced using excel.
+
+# SUPPLEMENTAL FIGURE 2 (FILE 6): Anti-PD(L)1 data missingness analysis
+
+Produced in the missingness analysis script.
+
+# SUPPLEMENTAL FIGURE 3 (FILE 7): Individual four-type multicancer correlations {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=20, fig.height=14}
+multi.net.sep$SKCM$layers[[3]]$aes_params$family <- "Palatino Linotype"
+multi.net.sep$SKCM$layers[[3]]$aes_params$size <- 5
+multi.net.sep$KIRC$layers[[3]]$aes_params$family <- "Palatino Linotype"
+multi.net.sep$KIRC$layers[[3]]$aes_params$size <- 5
+multi.net.sep$STAD$layers[[3]]$aes_params$family <- "Palatino Linotype"
+multi.net.sep$STAD$layers[[3]]$aes_params$size <- 5
+multi.net.sep$BLCA$layers[[3]]$aes_params$family <- "Palatino Linotype"
+multi.net.sep$BLCA$layers[[3]]$aes_params$size <- 5
+
+
+sep_netClusters <- ggarrange(plotlist = multi.net.sep, common.legend = TRUE, legend="bottom",labels = c("A. SKCM", "B. KIRC", "C. BLCA", "D. STAD"),font.label = list(size = 15, color = "black", face = "bold", family = "Palatino Linotype"))
+
+
+supp3 <-sep_netClusters
+
+supp3
+
+cairo_pdf(filename = paste0(figuresPath, "Supplemental Figure S3",".pdf"),width = 20, height=14)
+  print(supp3)
+dev.off()
+
+# 
+# ggsave(supp3, filename = paste0(figuresPath,"Supplemental Figure S3",".tiff"), dpi = 600,width = 20, height=14, 
+#        units = "in")
+
+```
+
+# FIGURE 3 : BCR-across cancer correlations & GO {.tabset .tabset-fade .tabset-pills}
+
+GO terms filtered and reduced based on similarity analysis
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=25, fig.height=17}
+
+fig3 <-ggdraw() +
+  draw_plot(p.bcr_h,x = 0, y = 0.6, width = 1, height = .4) +
+  draw_plot(pBub_bcr_0.filt.red,x = 0.01, y = 0, width = .97, height = .57) +
+  draw_plot_label(label = c("C"), size = 16,
+                  x = c(0), y = c(.58),family = "Palatino Linotype")
+
+fig3
+
+cairo_pdf(filename = paste0(figuresPath,"Figure 3",".pdf"),width = 25, height=17)
+  print(fig3)
+dev.off()
+
+
+# 
+# ggsave(fig3, filename = paste0(figuresPath,"Figure 3",".tiff"), dpi = 600,width = 25, height=17, 
+#        units = "in")
+
+```
+
+
+# Clinical response to ICI- Survival {.tabset .tabset-fade .tabset-pills}
+
+Minimum number of events per predictor parameter, EPP: 7
+
+```{r,warning=F, message=F,eval=TRUE}
+## HERE we define for which parameters we want to do Univariable analysis, and which to include in the multivariate survival analysis. 
+features <- featuresIn
+
+## Define which columns include survival data
+OS_time <- c("OS.time")
+OS_status <- c("OS")
+# PFS_time <- c("PFS.time")
+# PFS_status <- c("PFS")
+
+
+## DEFINE WHICH COLUMNS ARE CATEGORICAL
+categ_feats <-featuresIn
+## DEFINE WHICH COLUMNS ARE NUMERICAL
+# we also add the status and time columns
+numeric_feats <-featuresIn
+
+
+finallabels <- featuresInLabels
+names(finallabels) <- featuresIn
+```
+
+## Load uni- and multivariate survival analysis results {.tabset .tabset-fade .tabset-pills}
+
+### **TCGA** 
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=10, eval=TRUE}
+## SAVE DATA
+### Univariable
+## CAT
+# uni.cat.meta.tcga<-loadRData(paste0(projectRDataPath,"uni.cat.meta.TCGA",Rdata.suffix))
+uni.cat.meta4.tcga<-loadRData(paste0(survivalOutData,"uni.cat.meta4.TCGA",Rdata.suffix))
+uni.cat.4.tcga <- loadRData(paste0(survivalOutData,"uni.cat.4.TCGA",Rdata.suffix))
+
+
+### MULTIVARIATE
+## CAT
+# multi.cat.meta.tcga <- loadRData(paste0(projectRDataPath,"multi.cat.meta.TCGA",Rdata.suffix))
+multi.cat.meta4.tcga <- loadRData(paste0(survivalOutData,"multi.cat.meta4.TCGA",Rdata.suffix))
+multi.cat.4.tcga<- loadRData(paste0(survivalOutData,"multi.cat.4.TCGA",Rdata.suffix))
+
+
+# Get lists with HRs merge them
+uni.cat.4.tcga.hrlist <- sapply(uni.cat.4.tcga, function(x) x$res.df, simplify = FALSE)
+uni.cat.4.tcga.hrDF <- ldply(uni.cat.4.tcga.hrlist,id="project")
+colnames(uni.cat.4.tcga.hrDF)[1] <- "project"
+multi.cat.4.tcga.hrlist <- sapply(multi.cat.4.tcga, function(x) x$res.df, simplify = FALSE)
+multi.cat.4.tcga.hrDF <- ldply(multi.cat.4.tcga.hrlist,id="project")
+colnames(multi.cat.4.tcga.hrDF)[1] <- "project"
+
+uni.cat.4.tcga.hrDF$analysis <- rep("uni",nrow(uni.cat.4.tcga.hrDF))
+multi.cat.4.tcga.hrDF$analysis <- rep("multi",nrow(multi.cat.4.tcga.hrDF))
+
+# Merge
+categorical.4.tcga <- rbind(uni.cat.4.tcga.hrDF,multi.cat.4.tcga.hrDF)
+categorical.4.tcga$analysis <- factor(categorical.4.tcga$analysis,levels=c("uni","multi"))
+analysisLabels <- c("Univariable","multivariate")
+# significant
+categorical.4.tcga$sign <- ifelse(categorical.4.tcga$p <= 0.05,"sign","notsign")
+categorical.4.tcga$sign <- factor(categorical.4.tcga$sign, levels = c("sign","notsign"))
+fillLabels <- c("significant","non-significant","NA value")
+
+
+categorical.4.tcga$factor.name <- ifelse(categorical.4.tcga$factor.name=="CD8+ T cells infiltration",
+                                         "CD8+ T-cells infiltration",
+                                         ifelse(categorical.4.tcga$factor.name=="CD4+ T cells infiltration","CD4+ T-cells infiltration",categorical.4.tcga$factor.name))
+
+
+categorical.4.tcga$factor.name <- factor(categorical.4.tcga$factor.name, levels = featuresInLabels)
+
+categorical.4.tcga$project <- factor(categorical.4.tcga$project, levels = mycancertypes.final)
+
+```
+
+
+### **aPD1**
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=10, eval=TRUE}
+## SAVE DATA
+### Univariable
+## CAT
+uni.cat.meta.aPD1 <-loadRData(paste0(survivalOutData,"uni.cat.meta.aPD1",Rdata.suffix))
+uni.cat.4.aPD1 <- loadRData(paste0(survivalOutData,"uni.cat.4.aPD1",Rdata.suffix))
+
+
+### MULTIVARIATE
+## CAT
+multi.cat.meta.aPD1<- loadRData(paste0(survivalOutData,"multi.cat.meta.aPD1",Rdata.suffix))
+multi.cat.4.aPD1 <-loadRData(paste0(survivalOutData,"multi.cat.4.aPD1",Rdata.suffix))
+# Get lists with HRs merge them
+uni.cat.4.aPD1.hrlist <- sapply(uni.cat.4.aPD1, function(x) x$res.df, simplify = FALSE)
+uni.cat.4.aPD1.hrDF <- ldply(uni.cat.4.aPD1.hrlist,id="tissue")
+colnames(uni.cat.4.aPD1.hrDF)[1] <- "project"
+multi.cat.4.aPD1.hrlist <- sapply(multi.cat.4.aPD1, function(x) x$res.df, simplify = FALSE)
+multi.cat.4.aPD1.hrDF <- ldply(multi.cat.4.aPD1.hrlist,id="tissue")
+colnames(multi.cat.4.aPD1.hrDF)[1] <- "project"
+
+uni.cat.4.aPD1.hrDF$project <- ifelse(uni.cat.4.aPD1.hrDF$project=="melanoma", "SKCM anti-PD-1/L1",
+                                         ifelse(uni.cat.4.aPD1.hrDF$project=="RCC","KIRC anti-PD-1/L1",
+                                                ifelse(uni.cat.4.aPD1.hrDF$project=="bladder","BLCA anti-PD-1/L1",                                             ifelse(uni.cat.4.aPD1.hrDF$project=="gastric","STAD anti-PD-1/L1",uni.cat.4.aPD1.hrDF$project))))
+
+uni.cat.4.aPD1.hrDF$analysis <- rep("uni",nrow(uni.cat.4.aPD1.hrDF))
+
+multi.cat.4.aPD1.hrDF$project <- ifelse(multi.cat.4.aPD1.hrDF$project=="melanoma", "SKCM anti-PD-1/L1",
+                                         ifelse(multi.cat.4.aPD1.hrDF$project=="RCC","KIRC anti-PD-1/L1",
+                                                ifelse(multi.cat.4.aPD1.hrDF$project=="bladder","BLCA anti-PD-1/L1",                                             ifelse(multi.cat.4.aPD1.hrDF$project=="gastric","STAD anti-PD-1/L1",multi.cat.4.aPD1.hrDF$project))))
+multi.cat.4.aPD1.hrDF$analysis <- rep("multi",nrow(multi.cat.4.aPD1.hrDF))
+# Merge
+categorical.4.aPD1 <- rbind(uni.cat.4.aPD1.hrDF,multi.cat.4.aPD1.hrDF)
+categorical.4.aPD1$analysis <- factor(categorical.4.aPD1$analysis,levels=c("uni","multi"))
+analysisLabels <- c("Univariable","multivariate")
+# significant
+categorical.4.aPD1$sign <- ifelse(categorical.4.aPD1$p <= 0.05,"sign","notsign")
+categorical.4.aPD1$sign <- factor(categorical.4.aPD1$sign, levels = c("sign","notsign"))
+fillLabels <- c("significant","non-significant")
+
+
+categorical.4.aPD1$factor.name <- ifelse(categorical.4.aPD1$factor.name=="CD8+ T cells infiltration",
+                                         "CD8+ T-cells infiltration",
+                                         ifelse(categorical.4.aPD1$factor.name=="CD4+ T cells infiltration","CD4+ T-cells infiltration",categorical.4.aPD1$factor.name))
+
+
+categorical.4.aPD1$factor.name <- factor(categorical.4.aPD1$factor.name, levels = featuresInLabels)
+## Look at max value, WE HAVE ISSUE
+which(categorical.4.aPD1$HR==max(categorical.4.aPD1$HR, na.rm = T))
+
+categorical.4.aPD1[which(categorical.4.aPD1$HR==max(categorical.4.aPD1$HR, na.rm = T)),]
+
+categorical.4.aPD1$HR[which(categorical.4.aPD1$HR==max(categorical.4.aPD1$HR, na.rm = T))] <-Inf
+
+# Fix
+categorical.4.aPD1$project <- factor(categorical.4.aPD1$project, levels = paste0(mycancertypes.final," anti-PD-1/L1"))
+
+
+
+```
+
+### Load multivariate bootstrapped results
+
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=10, eval=TRUE}
+# Load aPD1 bootstrapped
+multi.boot.aPD1 <- loadRData(paste0(survivalOutData,"multi.cat.BOOT.aPD1",Rdata.suffix))
+
+
+```
+
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=10, eval=TRUE}
+# Load  TCGA bootstrapped
+multi.boot.TCGA <- loadRData(paste0(survivalOutData,"multi.cat.BOOT.TCGA",Rdata.suffix))
+
+
+```
+
+
+
+## Merge univariate and multivariate analysis for TCGA and anti-PD(L)1 histologies
+
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=10, eval=TRUE}
+# Select objects with bootstrapped CIs and pvalues
+
+multi.cat.4.aPD1.hrlist <- sapply(multi.boot.aPD1, function(x) x$bootCIpval, simplify = FALSE)
+multi.cat.4.aPD1.hrDF <- ldply(multi.cat.4.aPD1.hrlist,id="project")
+colnames(multi.cat.4.aPD1.hrDF)[1] <- "project"
+
+multi.cat.4.aPD1.hrDF$analysis <- rep("Multivariable",nrow(multi.cat.4.aPD1.hrDF))
+multi.cat.4.aPD1.hrDF$project <- ifelse(multi.cat.4.aPD1.hrDF$project=="melanoma", "SKCM",
+                                         ifelse(multi.cat.4.aPD1.hrDF$project=="RCC","KIRC",
+                                                ifelse(multi.cat.4.aPD1.hrDF$project=="bladder","BLCA",                                             ifelse(multi.cat.4.aPD1.hrDF$project=="gastric","STAD",multi.cat.4.aPD1.hrDF$project))))
+
+
+
+################################
+# Merge: Uni TCGA, Uni antiPD1, multi ALL
+uni.cat.4.tcga.hrDF$cohort <- rep("TCGA", nrow(uni.cat.4.tcga.hrDF))
+uni.cat.4.tcga.hrDF$analysis <- "Univariable"
+uni.cat.4.tcga.hrDF$analysis <- paste0(uni.cat.4.tcga.hrDF$analysis, " - ", uni.cat.4.tcga.hrDF$cohort)
+
+uni.cat.4.aPD1.hrDF$cohort <- rep("anti-PD-1/L1", nrow(uni.cat.4.aPD1.hrDF))
+uni.cat.4.aPD1.hrDF$analysis <- "Univariable"
+uni.cat.4.aPD1.hrDF$project <-str_replace(uni.cat.4.aPD1.hrDF$project," anti-PD-1/L1","")
+uni.cat.4.aPD1.hrDF$analysis <- paste0(uni.cat.4.aPD1.hrDF$analysis, " - ", uni.cat.4.aPD1.hrDF$cohort)
+
+
+multi.cat.4.aPD1.hrDF$cohort <- "anti-PD-1/L1"
+multi.cat.4.aPD1.hrDF$analysis <- paste0(multi.cat.4.aPD1.hrDF$analysis, " - ", multi.cat.4.aPD1.hrDF$cohort)
+
+
+####
+categorical.4.tcga.aPD1 <- rbind(uni.cat.4.tcga.hrDF[,-c(4,8,9,10,13)],uni.cat.4.aPD1.hrDF[,-c(4,8,9,10,13)],multi.cat.4.aPD1.hrDF[,-c(8,10)])
+categorical.4.tcga.aPD1$analysis <- factor(categorical.4.tcga.aPD1$analysis,levels=c("Univariable - TCGA","Univariable - anti-PD-1/L1", "Multivariable - anti-PD-1/L1"))
+analysisLabels <- c("Univariable - TCGA","Univariable - anti-PD-1/L1", "Multivariable - anti-PD-1/L1")
+
+##
+categorical.4.tcga.aPD1$signif. <- ifelse(categorical.4.tcga.aPD1$p <= 0.05,"p <= 0.05",
+                                       ifelse(categorical.4.tcga.aPD1$p <= 0.1,"p <= 0.1",
+                                              "ns"))
+categorical.4.tcga.aPD1$signif. <- factor(categorical.4.tcga.aPD1$signif., levels = c("p <= 0.1","p <= 0.05","ns"))
+fillLabels <- c("p <= 0.1","p <= 0.05","ns")
+
+##
+categorical.4.tcga.aPD1$factor.name <- ifelse(categorical.4.tcga.aPD1$factor.name=="CD8+ T cells infiltration",
+                                         "CD8+ T-cells infiltration",
+                                         ifelse(categorical.4.tcga.aPD1$factor.name=="CD4+ T cells infiltration","CD4+ T-cells infiltration",categorical.4.tcga.aPD1$factor.name))
+
+categorical.4.tcga.aPD1$factor.name <- factor(categorical.4.tcga.aPD1$factor.name, levels = featuresInLabels)
+
+categorical.4.tcga.aPD1$project <- factor(categorical.4.tcga.aPD1$project, levels = mycancertypes.final)
+
+
+
+
+categorical.4.tcga.aPD1$signif.<-factor(categorical.4.tcga.aPD1$signif., levels = c("ns","p <= 0.1","p <= 0.05"))
+
+```
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=7, eval=TRUE}
+# Try first nly aPD1.
+#I want to have facets for the tissues, and different shapes for analysis type.
+
+
+p.m <-plotHRratio(categorical.4.tcga.aPD1, xVar="factor.name",yVar="HR",xLabel= "",yLabel ="Hazard Ratio",shapeVar="analysis", facetVar="project",fillVar="signif.",filterVar=NULL,selectedFilter="",yLim=NULL,scaleYBreak=NULL,logy = TRUE,allIn = TRUE, sign3 = FALSE,pvalCol="p")
+#p.m
+
+p.m
+
+```
+
+# FIGURE 4 : Clinical response to ICI- ORR & Overall Survival {.tabset .tabset-fade .tabset-pills}
+
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=14, fig.height=13}
+
+fig4 <-ggdraw() +
+  draw_plot(pOrr,x = 0, y = 0.42, width = .98, height = .58) +
+  draw_plot(p.m,x = 0.0, y = 0, width = .97, height = .39) +
+  draw_plot_label(label = c("C"), size = 16,
+                  x = c(0), y = c(.4),family = "Palatino Linotype")
+
+fig4
+
+cairo_pdf(filename = paste0(figuresPath,"Figure 4",".pdf"),width = 14, height=13)
+  print(fig4)
+dev.off()
+
+
+# ggsave(fig4, filename = paste0(figuresPath,"Figure 4", ".tiff"), dpi = 600,width = 14, height=13, 
+#        units = "in")
+
+
+```
+
+
+
+# SUPPLEMENTAL FIGURE 4 (FILE 8): Gene ontology (GO) dotplots of the significantly enriched GO biological processes, contrast setting of high versus low PDL1/CD8 infiltration
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=25, fig.height=17}
+
+supp5 <-ggdraw() +
+  draw_plot(pBub_pdl1.filt.red,x = 0, y = .5, width = .99, height = .45) +
+  draw_plot(pBub_cd8.filt.red,x = 0, y = 0, width = .99, height = .45) +
+  draw_plot_label(label = c("A: PD-L1 high vs low", "B: CD8+ T cells infiltration high vs low"), size = 16,
+                  x = c(-.035,-.07), y = c(.98,.48),family = "Palatino Linotype")
+
+supp5
+
+
+cairo_pdf(filename = paste0(figuresPath,"Supplemental Figure S4",".pdf"),width = 24, height=21)
+  print(supp5)
+dev.off()
+# 
+# 
+# ggsave(supp5, filename = paste0(figuresPath,"Supplemental Figure S4",".tiff"), dpi = 600,width = 24, height=21, 
+#        units = "in")
+
+```
+
+
+# SUPPLEMENTAL FIGURE 5 (FILE 9): Objective response rate correlations with median logTMB, PD-L1 expression, TIS-GEP, CD8+, CD4+ T-cells, B cells infiltration, tumor purity across 26 TCGA tumor types
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=20, fig.height=15, eval=TRUE}
+pOrr.other
+
+cairo_pdf(filename = paste0(figuresPath,"Supplemental Figure S5",".pdf"),width = 20, height=15)
+  print(pOrr.other)
+dev.off()
+
+# 
+# ggsave(pOrr.other, filename = paste0(figuresPath,"Supplemental Figure S5",".tiff"), dpi = 600,width = 20, height=15, 
+#        units = "in")
+```
+
+# SUPPLEMENTAL FIGURE 6 (FILE 10): Univariable Cox proportional hazards analysis  - KM plots for TCR and BCR richness
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=12, fig.height=8}
+##### TCGA, 4 histologies, categorical, Univariable
+
+# TCR
+
+tcr.tcga4.uni.cat <- runUniSurvival_Singlevariable(DF = tcgaData.tp.sub.filt,var = featuresIn[1],varSelection =mycancertypes.final,varSelected = "project",survType = "OS", sampleID = "bcr_patient_barcode",varPlotName = featuresInLabels[1], printP=FALSE,saveP = TRUE,savePath=survivalOutData,onlySign=FALSE,selectFacets=mycancertypes.final)
+# tcr.tcga4.uni.cat$km
+
+# BCR
+bcr.tcga4.uni.cat <- runUniSurvival_Singlevariable(DF = tcgaData.tp.sub.filt,var = featuresIn[2],varSelection =mycancertypes.final,varSelected = "project",survType = "OS", sampleID = "bcr_patient_barcode",varPlotName = featuresInLabels[2], printP=FALSE,saveP = TRUE,savePath=survivalOutData,onlySign=FALSE,selectFacets=mycancertypes.final)
+# bcr.tcga4.uni.cat$km
+
+
+##### aPD1, 4 histologies, categorical, Univariable
+
+# TCR
+
+tcr.aPD14.uni.cat <- runUniSurvival_Singlevariable(DF = immdata.TcrBcr.full.red,var = featuresIn[1],varSelection =paste0(mycancertypes.final," anti-PD-1/L1"),varSelected = "tissue",survType = "OS", sampleID = "run_accession",varPlotName = featuresInLabels[1], printP=FALSE,saveP = TRUE,savePath=survivalOutData,onlySign=FALSE,selectFacets=paste0(mycancertypes.final," anti-PD-1/L1"))
+# tcr.aPD14.uni.cat$km
+
+# BCR
+bcr.aPD14.uni.cat <- runUniSurvival_Singlevariable(DF = immdata.TcrBcr.full.red,var = featuresIn[2],varSelection =paste0(mycancertypes.final," anti-PD-1/L1"),varSelected = "tissue",survType = "OS", sampleID = "run_accession",varPlotName = featuresInLabels[2], printP=FALSE,saveP = TRUE,savePath=survivalOutData,onlySign=FALSE,selectFacets=paste0(mycancertypes.final," anti-PD-1/L1"))
+# bcr.aPD14.uni.cat$km
+```
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=12, fig.height=8, eval=TRUE}
+
+tcr.uni <-ggarrange(plotlist = list(tcr.tcga4.uni.cat$km,
+                          tcr.aPD14.uni.cat$km + theme(legend.position = "none")),ncol=2, nrow =  1,legend.grob = tcr.tcga4.uni.cat$kmleg, legend="bottom")
+
+bcr.uni <-ggarrange(plotlist = list(bcr.tcga4.uni.cat$km,
+                          bcr.aPD14.uni.cat$km+ theme(legend.position = "none")),ncol=2, nrow =  1,legend.grob = bcr.tcga4.uni.cat$kmleg, legend="bottom")
+```
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=14, fig.height=16, eval=TRUE}
+
+
+supp6 <- ggdraw() + 
+      draw_plot(tcr.uni,x = 0, y = .5, width = .98, height = .48) +
+    draw_plot(bcr.uni,x = 0, y = 0, width = .98, height = .48) + 
+    draw_plot_label(label = c("A: TCR Richness TCGA", "B: TCR Richness anti-PD-1/L1", 
+                            "C: BCR Richness TCGA", "D: BCR Richness anti-PD-1/L1"), size = 16,
+                     x = c(-0.075, .39,-0.075, .39), y = c(1,1,.5,.5),family = "Palatino Linotype")
+
+supp6
+cairo_pdf(filename = paste0(figuresPath,"Supplemental Figure S6",".pdf"),family = "Palatino Linotype", width = 14, height=16)
+ 
+      print(supp6)
+dev.off()
+# ggsave(supp6, filename = paste0(figuresPath,"Supplemental Figure S6", ".tiff"), dpi = 600,width = 14, 
+#        height = 16, 
+#        units = "in")
+```
+
+# SUPPLEMENTAL FIGURE 7 (FILE 11): Univariable Cox proportional hazards analysis  - KM plots for logTMB, PD-L1 expression, TIS-GEP
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=14, fig.height=22, eval=TRUE}
+## SURVIVAL DATA
+tcga.SURV <-  sapply(featuresIn[3:9], function(x) loadRData(paste0(survivalOutData, paste0("tcga.SURV","_","OS","_",x),Rdata.suffix))$km,simplify = FALSE)
+
+aPD1.SURV <- sapply(featuresIn[3:9], function(x) loadRData(paste0(survivalOutData, paste0("aPD1.SURV","_","OS","_",x),Rdata.suffix))$km,simplify = FALSE)
+
+
+  
+res.km <-sapply(featuresIn[3:9], function(x) survComboKM(tcga.SURV,aPD1.SURV,x), simplify = FALSE)
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=14, fig.height=22, eval=TRUE}
+supp7 <-ggarrange(plotlist=res.km[1:3], 
+          labels = paste0(c("A: ", "B: ", "C: "),featuresInLabels[3:5],c(" TCGA vs anti-PD1/L1", " TCGA vs anti-PD1/L1", " TCGA vs anti-PD1/L1")),#c("A", "B", "C")
+          ncol = 1, nrow = 3,
+          label.x=c(-0.105,-0.135,-0.142),
+          font.label = list(size = 14, color = "black", face = "bold", family = "Palatino Linotype"))#,c(" Univariable", " Univariable", " Univariable")
+
+supp7
+
+cairo_pdf(filename = paste0(figuresPath,"Supplemental Figure S7",".pdf"),family = "Palatino Linotype", width = 14, height=22)
+  print(supp7)
+dev.off()
+
+# ggsave(supp7, filename = paste0(figuresPath,"Supplemental Figure S7", ".tiff"), dpi = 600,width = 14, 
+#        height = 22, 
+#        units = "in")
+```
+
+# SUPPLEMENTAL FIGURE 8 (FILE 12): Univariable Cox proportional hazards analysis  - KM plots for CD8+, CD4+ T-cells, B cells infiltration, tumor purity
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=14, fig.height=26, eval=TRUE}
+supp8 <-ggarrange(plotlist=res.km[4:7], 
+          labels = paste0(c("A: ", "B: ", "C: ","D: "),featuresInLabels[6:9],c(" TCGA vs anti-PD1/L1", " TCGA vs anti-PD1/L1", " TCGA vs anti-PD1/L1")),
+          ncol = 1, nrow = 4,
+          label.x=c(-0.155,-0.155,-0.135,-0.123),
+          font.label = list(size = 14, color = "black", face = "bold", family = "Palatino Linotype"))
+
+
+supp8
+
+cairo_pdf(filename = paste0(figuresPath,"Supplemental Figure S8",".pdf"),family = "Palatino Linotype", width = 14, height=26)
+  print(supp8)
+dev.off()
+
+# ggsave(supp8, filename = paste0(figuresPath,"Supplemental Figure S8",".tiff"), dpi = 600,width = 14, 
+#        height = 26, 
+#        units = "in")
+```
+
+
+# Prediction of response to ICI {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F}
+modelTypeA <- "_TCRArichnessIGH.ds"
+modelTypeB <- "_noLIU"
+modelTypeC <- "_mintcr4bcr10"
+###
+## DATA
+###
+# Keep samples with TMB (.tmb)
+immdata.TcrBcr.full.red.sub.tmb <- immdata.TcrBcr.full.red.sub %>% dplyr::filter(complete.cases(logTMB)) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb)
+# ONLY MELANOMA, WITH TMB (.tmb.MEL)
+immdata.TcrBcr.full.red.sub.tmb.MEL <- immdata.TcrBcr.full.red.sub.tmb %>% dplyr::filter(tissue=="melanoma") %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb.MEL)
+## ALL MELANOMA AND BLADDER, WITH TMB (.tmb.ALL)
+immdata.TcrBcr.full.red.sub.tmb.ALL <- immdata.TcrBcr.full.red.sub.tmb %>% dplyr::filter(tissue %in% c("melanoma","bladder")) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb.ALL)
+# ALL DATA, MELANOMA AND BLADDER, BUT LEAVE MISSING TMB (.ALL)
+immdata.TcrBcr.full.red.sub.ALL <- immdata.TcrBcr.full.red.sub  %>% dplyr::filter(tissue %in% c("melanoma","bladder")) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.ALL)
+
+## INSTEAD OF FILTERING FOR NO MISSING TMB, I DO THAT FOR ALL COVARIATES OF INTEREST
+# Remove rows that have outliers/missing values since I get errors with Knn imputation
+immdata.TcrBcr.full.red.sub.ALL.filt <- immdata.TcrBcr.full.red.sub.ALL %>% filter_at(vars(covariatesIn), all_vars(complete.cases(.))) %>% droplevels()
+# DOING THE SAME FOR THE ORIGINAL DATA - USE THIS WHEN TESTING
+# these data include other tissues apart from melanoma and bladder
+immdata.TcrBcr.full.red.sub.filt <- immdata.TcrBcr.full.red.sub  %>% filter_at(vars(covariatesIn), all_vars(complete.cases(.))) %>% droplevels()
+
+# FINAL DATA FOR MODELLING
+# Remove the Liu dataset for the model testing
+immdata.TcrBcr.BLAD.MEL.ready <-immdata.TcrBcr.full.red.sub.ALL.filt %>% dplyr::filter(dataset %notin% c("Liu") ) %>% droplevels() # All melanoma & bladder, PD, CR, PR, complete data
+immdata.TcrBcr.ALL.ready <- immdata.TcrBcr.full.red.sub.filt %>% dplyr::filter(dataset %notin% c("Liu") ) %>% droplevels() # All tissues, PD, CR, PR, complete data
+
+## For gastric
+immdata.TcrBcr.full.red.sub.filt.gastric <- immdata.TcrBcr.full.red.sub %>% dplyr::filter(tissue %in% c("gastric") ) %>%  
+                                            filter_at(vars(covariatesIn[-6]), all_vars(complete.cases(.))) %>% droplevels()
+
+```
+
+Load test data for predictive models
+
+```{r,warning=F, message=F}
+
+
+#################
+## LOAD TEST DATA FOR MODELS
+testDF <- loadRData(paste0(testDataOut,"testDF",modelTypeA,modelTypeB, modelTypeC,".RData"))
+data.testX <- as.data.frame(testDF[[1]][,which(colnames(testDF[[1]]) %in% covariatesIn)])
+
+## for gastric
+testDF.gastric <-loadRData(paste0(testDataOut,"testDF.gastric",modelTypeA,modelTypeB, modelTypeC,".RData"))
+```
+
+```{r,warning=F, message=F}
+
+# Addind Liu dataset
+test.ALL <- rbind(testDF[[1]],immdata.TcrBcr.full.red.sub.ALL.filt %>% dplyr::filter(dataset %in% c("Liu") ) %>% droplevels())
+data.testX.ALL <- as.data.frame(test.ALL[,which(colnames(test.ALL) %in% covariatesIn)])
+
+test.DF.melanoma <- test.ALL %>% dplyr::filter(tissue %in% c("melanoma")) %>% droplevels()
+data.testX.melanoma <- as.data.frame(test.DF.melanoma[,which(colnames(test.DF.melanoma) %in% covariatesIn)])
+
+test.DF.bladder <- testDF[[1]] %>% dplyr::filter(tissue %in% c("bladder")) %>% droplevels()
+data.testX.bladder <- as.data.frame(test.DF.bladder[,which(colnames(test.DF.bladder) %in% covariatesIn)])
+
+test.DF.rcc <- testDF[[1]] %>% dplyr::filter(tissue %in% c("RCC")) %>% droplevels()
+data.testX.rcc <- as.data.frame(test.DF.rcc[,which(colnames(test.DF.rcc) %in% covariatesIn)])
+
+test.DF.gastric <- testDF.gastric
+data.testX.gastric <- as.data.frame(test.DF.gastric[,which(colnames(test.DF.gastric) %in% covariatesIn[-6])])
+
+# LOAD FINAL MODELS
+models.final <- loadRData(paste0(modelsInterm,"models.final",modelTypeA,modelTypeB, modelTypeC,".RData"))
+sigs <- c("TCRArichness.ds", "logTMB","PDL1","BCR.IGHrichness.ds","TIS_sigscore",
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds"),collapse = " + "),
+          paste(c("TCRArichness.ds", "logTMB"),collapse = " + "),
+          paste(c("TCRArichness.ds", "PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds", "TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "logTMB"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "PDL1"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "TIS_sigscore"),collapse = " + "),
+          paste(c("logTMB", "PDL1"),collapse = " + "),
+          paste(c("logTMB", "TIS_sigscore"),collapse = " + "),
+          paste(c("PDL1","TIS_sigscore"),collapse = " + "),
+          # TRI
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","logTMB","PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","PDL1","TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds","logTMB","PDL1"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds","PDL1","TIS_sigscore"),collapse = " + "),
+          paste(c("logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          #QUADRA
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          #ALL
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          "all predictors")
+
+sigs_axisNames<- c(rep("Univariate Logistic Regression",5),
+                   rep("Bivariate Logistic Regression",10),
+                   rep("Trivariate Logistic Regression",10),
+                   rep("Quadravariate Logistic Regression",5),
+                   rep("5-variate Logistic Regression",1),
+                   "RFE with Naive Bayes")
+sigs_axisNames<-names(models.final)
+sigs_titleNames<- names(models.final)
+
+
+ClassLevels = c("CRPR","PD")
+rfeMode <- c(rep(FALSE,length(models.final)-1),
+             TRUE)
+indexUniRFE <-c(1:5,32)
+indexUni<- c(1:5)
+indexRFE <- 6
+indexBiv <-c(6:15)
+indexTriv<-c(16:25)
+indexQuad5<-c(26:32)
+indexGASTRIC <-c(1,2,4,5)
+```
+
+
+## Table with ROC curves- SCHEME 1- Histology Non-specific
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=8}
+
+
+melted_mat.all<-loadRData(paste0(rocCompareOut,"modelsCompRFE.DF",modelTypeA,modelTypeB, modelTypeC,".RData"))
+
+# Need to create table with merged ROC AUCs and ROC-AUC significant test
+roc_values <-ROCcalculation_models(modelList = models.final, 
+                                 test.data = testDF[[1]],testX =  data.testX,testY = testDF[[1]]$response,
+                                 classes = c("CRPR","PD"), LevelIndex =1, responseVar = "response", 
+                                 modelNamesVec = names(models.final), dsids = 1:length(models.final), 
+                                 thres = NULL,rfeE=FALSE,
+                                 mixedMode = TRUE,
+                                  trainModelsVec = c(1:c(length(models.final)-1)),
+                                  rfeModelsVec = c(length(models.final)))
+
+roc_values <-roc_values[match(names(models.final), roc_values$modnames),]
+# Add number of features
+nofeats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) length(models.final[1:c(length(models.final)-1)][[x]]$coefnames))
+nofeats.RFE <- sapply(1:length(models.final[length(models.final)]), function(x) length(models.final[length(models.final)][[x]]$optVariables))
+feats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) paste(models.final[1:c(length(models.final)-1)][[x]]$coefnames,collapse = ", "))
+feats.RFE <- sapply(1:length(models.final[16]), function(x) paste(models.final[length(models.final)][[x]]$optVariables,collapse = ", "))
+roc_values$NOfeaturesOut <- c(nofeats.noRFE,nofeats.RFE)
+roc_values$optPredictors <- c(feats.noRFE,feats.RFE)
+
+roc_values$trained <- rep("bladder, melanoma",nrow(roc_values))
+roc_values$tested <- rep("bladder, melanoma, RCC",nrow(roc_values))
+roc_values$testSample <- rep(nrow(data.testX),nrow(roc_values))
+
+```
+
+
+## Table with ROC curves- SCHEME 1- melanoma
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+test.DF.melanoma <- test.ALL %>% dplyr::filter(tissue %in% c("melanoma")) %>% droplevels()
+data.testX.melanoma <- as.data.frame(test.DF.melanoma[,which(colnames(test.DF.melanoma) %in% covariatesIn)])
+```
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=8}
+melted_mat.mel<-loadRData(paste0(rocCompareOut,"modelsCompRFE.DF",modelTypeA,modelTypeB, modelTypeC,"_MEL",".RData"))
+
+# Need to create table with merged ROC AUCs and ROC-AUC significant test
+roc_values.mel <-ROCcalculation_models(modelList = models.final, 
+                                 test.data = test.DF.melanoma,testX =  data.testX.melanoma,testY = test.DF.melanoma$response,
+                                 classes = c("CRPR","PD"), LevelIndex =1, responseVar = "response", 
+                                 modelNamesVec = names(models.final), dsids = 1:length(models.final), 
+                                 thres = NULL,rfeE=FALSE,
+                                 mixedMode = TRUE,
+                                  trainModelsVec = c(1:c(length(models.final)-1)),
+                                  rfeModelsVec = c(length(models.final)))
+
+roc_values.mel <-roc_values.mel[match(names(models.final), roc_values.mel$modnames),]
+# Add number of features
+nofeats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) length(models.final[1:c(length(models.final)-1)][[x]]$coefnames))
+nofeats.RFE <- sapply(1:length(models.final[length(models.final)]), function(x) length(models.final[length(models.final)][[x]]$optVariables))
+feats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) paste(models.final[1:c(length(models.final)-1)][[x]]$coefnames,collapse = ", "))
+feats.RFE <- sapply(1:length(models.final[16]), function(x) paste(models.final[length(models.final)][[x]]$optVariables,collapse = ", "))
+roc_values.mel$NOfeaturesOut <- c(nofeats.noRFE,nofeats.RFE)
+roc_values.mel$optPredictors <- c(feats.noRFE,feats.RFE)
+
+roc_values.mel$trained <- rep("bladder, melanoma",nrow(roc_values.mel))
+roc_values.mel$tested <- rep("melanoma",nrow(roc_values.mel))
+roc_values.mel$testSample <- rep(nrow(data.testX.melanoma),nrow(roc_values.mel))
+# 
+
+```
+
+## Table with ROC curves- SCHEME 1- bladder
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+test.DF.bladder <- testDF[[1]] %>% dplyr::filter(tissue %in% c("bladder")) %>% droplevels()
+data.testX.bladder <- as.data.frame(test.DF.bladder[,which(colnames(test.DF.bladder) %in% covariatesIn)])
+```
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=8}
+melted_mat.blad<-loadRData(paste0(rocCompareOut,"modelsCompRFE.DF",modelTypeA,modelTypeB, modelTypeC,"_BLAD",".RData"))
+
+# Need to create table with merged ROC AUCs and ROC-AUC significant test
+roc_values.blad <-ROCcalculation_models(modelList = models.final, 
+                                 test.data = test.DF.bladder,testX =  data.testX.bladder,testY = test.DF.bladder$response,
+                                 classes = c("CRPR","PD"), LevelIndex =1, responseVar = "response", 
+                                 modelNamesVec = names(models.final), dsids = 1:length(models.final), 
+                                 thres = NULL,rfeE=FALSE,
+                                 mixedMode = TRUE,
+                                  trainModelsVec = c(1:c(length(models.final)-1)),
+                                  rfeModelsVec = c(length(models.final)))
+
+roc_values.blad <-roc_values.blad[match(names(models.final), roc_values.blad$modnames),]
+# Add number of features
+nofeats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) length(models.final[1:c(length(models.final)-1)][[x]]$coefnames))
+nofeats.RFE <- sapply(1:length(models.final[length(models.final)]), function(x) length(models.final[length(models.final)][[x]]$optVariables))
+feats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) paste(models.final[1:c(length(models.final)-1)][[x]]$coefnames,collapse = ", "))
+feats.RFE <- sapply(1:length(models.final[16]), function(x) paste(models.final[length(models.final)][[x]]$optVariables,collapse = ", "))
+roc_values.blad$NOfeaturesOut <- c(nofeats.noRFE,nofeats.RFE)
+roc_values.blad$optPredictors <- c(feats.noRFE,feats.RFE)
+
+roc_values.blad$trained <- rep("bladder, melanoma",nrow(roc_values.blad))
+roc_values.blad$tested <- rep("bladder",nrow(roc_values.blad))
+
+roc_values.blad$testSample <- rep(nrow(data.testX.bladder),nrow(roc_values.blad))
+# 
+
+```
+
+## Table with ROC curves- SCHEME 1- RCC
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+test.DF.rcc <- testDF[[1]] %>% dplyr::filter(tissue %in% c("RCC")) %>% droplevels()
+data.testX.rcc <- as.data.frame(test.DF.rcc[,which(colnames(test.DF.rcc) %in% covariatesIn)])
+```
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=8}
+melted_mat.rcc<-loadRData(paste0(rocCompareOut,"modelsCompRFE.DF",modelTypeA,modelTypeB, modelTypeC,"_RCC",".RData"))
+
+# Need to create table with merged ROC AUCs and ROC-AUC significant test
+roc_values.rcc <-ROCcalculation_models(modelList = models.final, 
+                                 test.data = test.DF.rcc,testX =  data.testX.rcc,testY = test.DF.rcc$response,
+                                 classes = c("CRPR","PD"), LevelIndex =1, responseVar = "response", 
+                                 modelNamesVec = names(models.final), dsids = 1:length(models.final), 
+                                 thres = NULL,rfeE=FALSE,
+                                 mixedMode = TRUE,
+                                  trainModelsVec = c(1:c(length(models.final)-1)),
+                                  rfeModelsVec = c(length(models.final)))
+
+roc_values.rcc <-roc_values.rcc[match(names(models.final), roc_values.rcc$modnames),]
+# Add number of features
+nofeats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) length(models.final[1:c(length(models.final)-1)][[x]]$coefnames))
+nofeats.RFE <- sapply(1:length(models.final[length(models.final)]), function(x) length(models.final[length(models.final)][[x]]$optVariables))
+feats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) paste(models.final[1:c(length(models.final)-1)][[x]]$coefnames,collapse = ", "))
+feats.RFE <- sapply(1:length(models.final[16]), function(x) paste(models.final[length(models.final)][[x]]$optVariables,collapse = ", "))
+roc_values.rcc$NOfeaturesOut <- c(nofeats.noRFE,nofeats.RFE)
+roc_values.rcc$optPredictors <- c(feats.noRFE,feats.RFE)
+
+roc_values.rcc$trained <- rep("bladder, melanoma",nrow(roc_values.rcc))
+roc_values.rcc$tested <- rep("RCC",nrow(roc_values.rcc))
+
+roc_values.rcc$testSample <- rep(nrow(data.testX.rcc),nrow(roc_values.rcc))
+# 
+
+```
+
+## Table with ROC curves- SCHEME 1- Gastric
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+test.DF.gastric <- immdata.TcrBcr.full.red.sub %>% dplyr::filter(tissue %in% c("gastric")) %>% distinct() %>% droplevels()
+data.testX.gastric <- as.data.frame(test.DF.gastric[,which(colnames(test.DF.gastric) %in% covariatesIn[-6])])
+
+
+models.gastric <-models.final[c(1:2,4:5,6,8:9,11:12,15,17:18,21,24,28)]
+names(models.gastric) <- c('M01: R ~ TCRa richness','M02: R ~ BCRigh richness', 
+                      # "M3: R ~ logTMB",
+                      'M04: R ~ PD-L1',
+                      'M05: R ~ TIS GEP',
+                      #BIVAR
+                      "M06 (LR): R ~ TCR richness + BCR richness",
+                      # "M7 (LR): R ~ TCR richness + logTMB", 
+                      "M08 (LR): R ~ TCR richness + PD-L1", 
+                      "M09 (LR): R ~ TCR richness + TIS GEP",
+                      # "M10 (LR): R ~ BCR richness + logTMB",
+                      "M11 (LR): R ~ BCR richness + PD-L1",
+                      "M12 (LR): R ~ BCR richness + TIS GEP",
+                      # "M13 (LR): R ~ logTMB + PD-L1",
+                      # "M14 (LR): R ~ logTMB + TIS GEP",
+                      "M15 (LR): R ~ PD-L1 + TIS GEP",
+                      #TRIVAR
+                      # "M16 (LR): R ~ TCR richness + BCR richness + logTMB",
+                      "M17 (LR): R ~ TCR richness + BCR richness + PD-L1",
+                      "M18 (LR): R ~ TCR richness + BCR richness + TIS GEP",
+                      # "M19 (LR): R ~ TCR richness + logTMB + PD-L1", 
+                      # "M20 (LR): R ~ TCR richness + logTMB + TIS GEP",
+                      "M21 (LR): R ~ TCR richness + PD-L1 + TIS GEP",   
+                      # "M22 (LR): R ~ BCR richness + logTMB + PD-L1",
+                      # "M23 (LR): R ~ BCR richness + logTMB + TIS GEP",
+                      "M24 (LR): R ~ BCR richness + PD-L1 + TIS GEP",
+                      # "M25 (LR): R ~ logTMB + PD-L1 + TIS GEP", 
+                      #QUADRAVAR
+                      # "M26 (LR): R ~ TCR richness + BCR richness + logTMB + PD-L1",
+                      # "M27 (LR): R ~ TCR richness + BCR richness + logTMB + TIS GEP",
+                      "M28 (LR): R ~ TCR richness + BCR richness + PD-L1 + TIS GEP"
+                      # "M29 (LR): R ~ TCR richness + logTMB + PD-L1 + TIS GEP",
+                      # "M30 (LR): R ~  BCR richness + logTMB + PD-L1 + TIS GEP",
+                      # "M31 (LR): R ~ TCR richness + BCR richness + logTMB + PD-L1 + TIS GEP",
+                      )
+
+
+sigs <- c("TCRArichness.ds", "BCR.IGHrichness.ds","PDL1","TIS_sigscore",
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds"),collapse = " + "),
+          # paste(c("TCRArichness.ds", "logTMB"),collapse = " + "),
+          paste(c("TCRArichness.ds", "PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds", "TIS_sigscore"),collapse = " + "),
+          # paste(c("BCR.IGHrichness.ds", "logTMB"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "PDL1"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "TIS_sigscore"),collapse = " + "),
+          # paste(c("logTMB", "PDL1"),collapse = " + "),
+          # paste(c("logTMB", "TIS_sigscore"),collapse = " + "),
+          paste(c("PDL1","TIS_sigscore"),collapse = " + "),
+          # TRI
+          # paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","TIS_sigscore"),collapse = " + "),
+          # paste(c("TCRArichness.ds","logTMB","PDL1"),collapse = " + "),
+          # paste(c("TCRArichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","PDL1","TIS_sigscore"),collapse = " + "),
+          # paste(c("BCR.IGHrichness.ds","logTMB","PDL1"),collapse = " + "),
+          # paste(c("BCR.IGHrichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds","PDL1","TIS_sigscore"),collapse = " + "),
+          # paste(c("logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          #QUADRA
+          # paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1"),collapse = " + "),
+          # paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1","TIS_sigscore"),collapse = " + ")
+          # paste(c("TCRArichness.ds","logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          # paste(c("BCR.IGHrichness.ds", "logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          #ALL
+          # paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          # "all predictors"
+          )
+
+sigs_axisNames<- c(rep("Univariate Logistic Regression",4),
+                   rep("Bivariate Logistic Regression",6),
+                   rep("Trivariate Logistic Regression",4),
+                   rep("Quadravariate Logistic Regression",1)
+                   )
+sigs_axisNames<-names(models.gastric)
+sigs_titleNames<- names(models.gastric)
+
+```
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=8}
+melted_mat.gas<-loadRData(paste0(rocCompareOut,"modelsCompRFE.DF",modelTypeA,modelTypeB, modelTypeC,"_GAS",".RData"))
+
+# Need to create table with merged ROC AUCs and ROC-AUC significant test
+roc_values.gas <-ROCcalculation_models(modelList = models.gastric, 
+                                 test.data = test.DF.gastric,testX =  data.testX.gastric,testY = test.DF.gastric$response,
+                                 classes = c("CRPR","PD"), LevelIndex =1, responseVar = "response", 
+                                 modelNamesVec = names(models.gastric), dsids = 1:length(models.gastric), 
+                                 thres = NULL,rfeE=FALSE,
+                                 mixedMode = FALSE,
+                                  trainModelsVec = c(1:c(length(models.gastric)-1)),
+                                  rfeModelsVec = c(length(models.gastric)))
+
+roc_values.gas <-roc_values.gas[match(names(models.gastric), roc_values.gas$modnames),]
+# Add number of features
+nofeats.noRFE <- sapply(1:length(models.gastric[1:c(length(models.gastric)-1)]), function(x) length(models.gastric[1:c(length(models.gastric)-1)][[x]]$coefnames))
+nofeats.RFE <- sapply(1:length(models.gastric[length(models.gastric)]), function(x) length(models.gastric[length(models.gastric)][[x]]$optVariables))
+feats.noRFE <- sapply(1:length(models.gastric[1:c(length(models.gastric)-1)]), function(x) paste(models.gastric[1:c(length(models.gastric)-1)][[x]]$coefnames,collapse = ", "))
+feats.RFE <- sapply(1:length(models.gastric[16]), function(x) paste(models.gastric[length(models.gastric)][[x]]$optVariables,collapse = ", "))
+roc_values.gas$NOfeaturesOut <- c(nofeats.noRFE,nofeats.RFE)
+roc_values.gas$optPredictors <- c(feats.noRFE,feats.RFE)
+
+roc_values.gas$trained <- rep("bladder, melanoma",nrow(roc_values.gas))
+roc_values.gas$tested <- rep("gastric",nrow(roc_values.gas))
+
+roc_values.gas$testSample <- rep(nrow(data.testX.gastric),nrow(roc_values.gas))
+
+```
+
+## Table with ROC curves- SCHEME 2 - BLCA
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis',fig.width=8, fig.height=8}
+modelTypeA <- "_TCRArichnessBCR.IGH.ds"
+modelTypeB <- "_BLADDER"
+modelTypeC <- "mintcr4bcr10"
+## LOAD TEST DATA FOR MODELS
+models.final <- loadRData(paste0(modelsInterm,"models.final",modelTypeA,modelTypeB, modelTypeC,".RData"))
+names(models.final)[32] <-"M32 (RFE-SVM Radial): R ~ ."
+testDF <- loadRData(paste0(testDataOut,"testDF",modelTypeA,modelTypeB, modelTypeC,".RData"))
+data.testX <- as.data.frame(testDF[[1]][,which(colnames(testDF[[1]]) %in% covariatesIn)])
+
+# Calculate all pairwise combinations of TuTack signatures
+indexUniRFE <-c(1:5,32)
+indexUni<- c(1:5)
+indexRFE <- 6
+indexBiv <-c(6:15)
+indexTriv<-c(16:25)
+indexQuad5<-c(26:32)
+indexGASTRIC <-c(1,2,4,5)
+# models.final <- models.final[indexUniRFE]
+modelNames.final<- names(models.final)
+```
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=8}
+melted_mat.blad.spec<-loadRData(paste0(rocCompareOut,"modelsCompRFE.DF",modelTypeA,modelTypeB, modelTypeC,".RData"))
+
+# Need to create table with merged ROC AUCs and ROC-AUC significant test
+roc_values.blad.spec <-ROCcalculation_models(modelList = models.final, 
+                                 test.data = testDF[[1]],testX =  data.testX,testY = testDF[[1]]$response,
+                                 classes = c("CRPR","PD"), LevelIndex =1, responseVar = "response", 
+                                 modelNamesVec = names(models.final), dsids = 1:length(models.final), 
+                                 thres = NULL,rfeE=FALSE,
+                                 mixedMode = TRUE,
+                                  trainModelsVec = c(1:c(length(models.final)-1)),
+                                  rfeModelsVec = c(length(models.final)))
+
+roc_values.blad.spec <-roc_values.blad.spec[match(names(models.final), roc_values.blad.spec$modnames),]
+# Add number of features
+nofeats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) length(models.final[1:c(length(models.final)-1)][[x]]$coefnames))
+nofeats.RFE <- sapply(1:length(models.final[length(models.final)]), function(x) length(models.final[length(models.final)][[x]]$optVariables))
+feats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) paste(models.final[1:c(length(models.final)-1)][[x]]$coefnames,collapse = ", "))
+feats.RFE <- sapply(1:length(models.final[16]), function(x) paste(models.final[length(models.final)][[x]]$optVariables,collapse = ", "))
+roc_values.blad.spec$NOfeaturesOut <- c(nofeats.noRFE,nofeats.RFE)
+roc_values.blad.spec$optPredictors <- c(feats.noRFE,feats.RFE)
+
+roc_values.blad.spec$trained <- rep("bladder",nrow(roc_values.blad.spec))
+roc_values.blad.spec$tested <- rep("bladder",nrow(roc_values.blad.spec))
+
+roc_values.blad.spec$testSample <- rep(nrow(data.testX),nrow(roc_values.blad.spec))
+# 
+
+```
+
+## Table with ROC curves- SCHEME 3 - MELANOMA
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=14, fig.height=8}
+modelTypeA <- "_TCRArichnessBCR.IGH.ds"
+modelTypeB <- "_MELANOMA"
+modelTypeC <- "mintcr4bcr10"
+## LOAD TEST DATA FOR MODELS
+models.final <- loadRData(paste0(modelsInterm,"models.final",modelTypeA,modelTypeB, modelTypeC,".RData"))
+names(models.final)[32] <-"M32 (RFE-SVM Linear)"
+
+testDF <- loadRData(paste0(testDataOut,"testDF",modelTypeA,modelTypeB, modelTypeC,".RData"))
+data.testX <- as.data.frame(testDF[[1]][,which(colnames(testDF[[1]]) %in% covariatesIn)])
+
+# Calculate all pairwise combinations of TuTack signatures
+indexUniRFE <-c(1:5,32)
+indexUni<- c(1:5)
+indexRFE <- 6
+indexBiv <-c(6:15)
+indexTriv<-c(16:25)
+indexQuad5<-c(26:31)
+
+```
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=8}
+melted_mat.mel.spec<-loadRData(paste0(rocCompareOut,"modelsCompRFE.DF",modelTypeA,modelTypeB, modelTypeC,".RData"))
+
+# Need to create table with merged ROC AUCs and ROC-AUC significant test
+roc_values.mel.spec <-ROCcalculation_models(modelList = models.final, 
+                                 test.data = testDF[[1]],testX =  data.testX,testY = testDF[[1]]$response,
+                                 classes = c("CRPR","PD"), LevelIndex =1, responseVar = "response", 
+                                 modelNamesVec = names(models.final), dsids = 1:length(models.final), 
+                                 thres = NULL,rfeE=FALSE,
+                                 mixedMode = TRUE,
+                                  trainModelsVec = c(1:c(length(models.final)-1)),
+                                  rfeModelsVec = c(length(models.final)))
+
+roc_values.mel.spec <-roc_values.mel.spec[match(names(models.final), roc_values.mel.spec$modnames),]
+# Add number of features
+nofeats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) length(models.final[1:c(length(models.final)-1)][[x]]$coefnames))
+nofeats.RFE <- sapply(1:length(models.final[length(models.final)]), function(x) length(models.final[length(models.final)][[x]]$optVariables))
+feats.noRFE <- sapply(1:length(models.final[1:c(length(models.final)-1)]), function(x) paste(models.final[1:c(length(models.final)-1)][[x]]$coefnames,collapse = ", "))
+feats.RFE <- sapply(1:length(models.final[16]), function(x) paste(models.final[length(models.final)][[x]]$optVariables,collapse = ", "))
+roc_values.mel.spec$NOfeaturesOut <- c(nofeats.noRFE,nofeats.RFE)
+roc_values.mel.spec$optPredictors <- c(feats.noRFE,feats.RFE)
+
+roc_values.mel.spec$trained <- rep("melanoma",nrow(roc_values.mel.spec))
+roc_values.mel.spec$tested <- rep("melanoma",nrow(roc_values.mel.spec))
+
+
+roc_values.mel.spec$testSample <- rep(nrow(data.testX),nrow(roc_values.mel.spec))
+
+```
+
+# SUPPLEMENTAL FILE 4: Tables of ROC-AUC values of univariable models of established biomarkers, TCR richness, BCR richness compared to the bivariable and multivariable models in histology non specific scheme (1), BLCA-specific (2), SKCM-specific (3)
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+
+
+rocs_schemes <- list(`BLCA+\nSKCM+\nKIRC\n(110) `=roc_values,
+                     `BLCA\n(59) ` = roc_values.blad,
+                     `SKCM\n(95) ` = roc_values.mel,
+                     `KIRC\n(31) ` = roc_values.rcc,
+                     `STAD\n(29) ` = roc_values.gas,
+                     `BLCA\n(53) ` = roc_values.blad.spec,
+                     `SKCM\n(31) ` = roc_values.mel.spec)
+
+# Change column names
+
+rocs_schemes <- sapply(rocs_schemes, function(x) x %>% 
+                         dplyr::select(-dsids,-curvetypes,-NOfeaturesOut,-optPredictors) %>% 
+                         setNames(c("Model", "ROC-AUC", "Trained_on", "Tested_on","Sample_test")), simplify=FALSE)
+```
+
+
+```{r,warning=F, message=F, fig.width=35, fig.height=19,fig.show = 'hide', eval=TRUE}
+
+
+schemesTitles <- c("Scheme 1 - Histology non-specific models",
+                   "Scheme 1 - Histology non-specific models",
+                   "Scheme 1 - Histology non-specific models",
+                   "Scheme 1 - Histology non-specific models",
+                   "Scheme 1 - Histology non-specific models",
+                   "Scheme 2 - BLCA-specific models",
+                   "Scheme 3 - SKCM-specific models")
+trainedOn <- c("Trained on BLCA, SKCM (excl. Liu et al. dataset) anti-PD-1/L1 datasets",
+               "Trained on BLCA, SKCM (excl. Liu et al. dataset) anti-PD-1/L1 datasets",
+               "Trained on BLCA, SKCM (excl. Liu et al. dataset) anti-PD-1/L1 datasets",
+               "Trained on BLCA, SKCM (excl. Liu et al. dataset) anti-PD-1/L1 datasets",
+               "Trained on BLCA, SKCM (excl. Liu et al. dataset) anti-PD-1/L1 datasets",
+               "Trained on BLCA anti-PD-1/L1 datasets",
+               "Trained on SKCM (incl. Liu et al. dataset) anti-PD-1/L1 datasets")
+testedOn <- c("Tested on BLCA, SKCM (excl. Liu et al. dataset) and KIRC anti-PD-1/L1 datasets",
+              "Tested on BLCA anti-PD-1/L1 datasets",
+              "Tested on SKCM anti-PD-1/L1 datasets",
+              "Tested on external validation KIRC anti-PD-1/L1 dataset",
+              "Tested on one external validation STAD anti-PD-1/L1 dataset",
+              "Tested on BLCA anti-PD-1/L1 dataset",
+              "Tested on SKCM anti-PD-1/L1 dataset")
+
+schemeSheet <- c("S1-All",
+                 "S1-BLCA",
+                 "S1-SKCM",
+                 "S1-KIRC",
+                 "S1-STAD",
+                 "S2-BLCA specific",
+                 "S3-SKCM specific")
+wb <- createWorkbook()
+# condition="BCR-"
+for(i in seq(1:7)){
+  # i=1
+  # Create sheet
+  addWorksheet(wb, schemeSheet[i])
+  # Start writing title
+  # First
+  writeData(wb, sheet=schemeSheet[i], "Supplementary table 4. ROC-AUC values of univariable models of established biomarkers (logTMB, PD-L1, GEP), TCR richness, BCR richness compared to the bivariable and multivariable models (including the Recursive Feature Elimination model). Multivariable models include additional potential biomarkers CD8+ and CD4+ T-cells infiltration, B-cells infiltration and Tumor Purity. Models were evaluated on separate test data.", startCol = 1, startRow = 1)
+  addStyle(wb = wb, sheet=schemeSheet[i], rows = 1, cols = 1, style = TitleStyle1)
+  # Second
+  writeData(wb, sheet=schemeSheet[i], schemesTitles[i], startCol = 1, startRow = 3)
+  addStyle(wb = wb, sheet=schemeSheet[i], rows = 3, cols = 1, style = TitleStyle2)
+  # Third
+  writeData(wb, sheet=schemeSheet[i], trainedOn[i], startCol = 1, startRow = 4)
+  addStyle(wb = wb, sheet=schemeSheet[i],  rows = 4, cols = 1, style = TitleStyle3)
+  # Fourth
+  writeData(wb, sheet=schemeSheet[i], testedOn[i], startCol = 1, startRow = 5)
+  addStyle(wb = wb, sheet=schemeSheet[i], rows = 5, cols = 1, style = TitleStyle3)
+  # Write table woth data
+  writeData(wb,schemeSheet[i], rocs_schemes[[i]] %>% as.data.frame(), startCol = 1, startRow = 7, rowNames = FALSE,headerStyle = headerStyle1)
+
+}
+
+
+saveWorkbook(wb,paste0(projectOutDataPath,"/","Supplemental File 4.xlsx"), overwrite = TRUE)
+
+```
+
+# FIGURE 5 : Models performance - ROC-AUC {.tabset .tabset-fade .tabset-pills}
+
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+
+
+rocs_schemes_merged_DF <- ldply(rocs_schemes)
+
+keep_models <- unique(rocs_schemes_merged_DF$Model)[c(1:5,32:34)]
+# keep_models
+rocs_schemes_merged_DF.sub <- rocs_schemes_merged_DF %>% dplyr::filter(Model %in% keep_models) %>% droplevels()
+colnames(rocs_schemes_merged_DF.sub)[1] <- "scheme"
+
+rocs_schemes_merged_DF.sub$scheme <- factor(rocs_schemes_merged_DF.sub$scheme, levels=rev(rocs_schemes_merged_DF.sub$scheme %>% unique()))
+
+rocs_schemes_merged_DF.sub$Model <- ifelse(rocs_schemes_merged_DF.sub$Model=="M01: R ~ TCRa richness", "TCR Richness",
+                                         ifelse(rocs_schemes_merged_DF.sub$Model=="M02: R ~ BCRigh richness", "BCR Richness",
+                                                ifelse(rocs_schemes_merged_DF.sub$Model=="M03: R ~ logTMB", "logTMB",
+                                                       ifelse(rocs_schemes_merged_DF.sub$Model=="M04: R ~ PD-L1", "PD-L1",
+                                                              ifelse(rocs_schemes_merged_DF.sub$Model=="M05: R ~ TIS GEP", "TIS GEP",ifelse(rocs_schemes_merged_DF.sub$Model=="M32 (RFE-NB): R ~ .", "RFE-optimal",                                   ifelse(rocs_schemes_merged_DF.sub$Model=="M32 (RFE-SVM Radial): R ~ .", "RFE-optimal",ifelse(rocs_schemes_merged_DF.sub$Model=="M32 (RFE-SVM Linear)" , "RFE-optimal",rocs_schemes_merged_DF.sub$Model))))))))
+
+
+rocs_schemes_merged_DF.sub$Model <- factor(rocs_schemes_merged_DF.sub$Model, levels=unique(rocs_schemes_merged_DF.sub$Model))
+
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=11, fig.height=11}
+roc_meansByModel <-aggregate( `ROC-AUC` ~ Model, data = rocs_schemes_merged_DF.sub, FUN = mean) %>% arrange(desc(`ROC-AUC`))
+roc_meansByModel
+rocs_schemes_merged_DF.sub$Model <- factor(rocs_schemes_merged_DF.sub$Model, levels=roc_meansByModel$Model %>% as.character() %>% rev())
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=11, fig.height=11}
+
+fig5 <-myBubblePlot(rocs_schemes_merged_DF.sub,"Model", "scheme", "Sample_test", "ROC-AUC" )
+fig5 <- fig5+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"),axis.title=element_blank(),axis.ticks.length = unit(0, "pt"))
+
+# Scheme names as panels
+p2 <- tibble(ymin = c(0, 1,2), ymax = c(1,2, 7), fill = c("SKCM-specific\n(Scheme 3)", "BLCA-specific\n(Scheme 2)", "Histology non-specific\n(Scheme 1)")) %>% 
+  ggplot() +
+  geom_rect(aes(xmin = 0, xmax = 1, ymin = ymin, ymax = ymax), color="grey50", fill="white") + #, fill = fill
+  geom_text(aes(x = .5, y = (ymin  + ymax) / 2, label = fill, fontface="bold", family="Palatino Linotype"), angle = 90,size=4.5) +
+  # scale_y_reverse(breaks = seq(1, 10), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(breaks = seq(1, 7), expand = expansion(mult = c(0, 0))) +
+  scale_x_continuous(breaks = c(0), expand = expansion(mult = c(0, 0))) +
+  guides(fill = FALSE) + labs(x="", y="") + 
+  theme_bw(base_family = "Palatino Linotype", base_size = 20) +
+theme(axis.text.x=element_blank(),
+      axis.ticks.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks.y=element_blank())
+
+fig5.f <-p2 + fig5 + patchwork::plot_layout(widths = c(0.7, 9.3))
+# fig5.f
+# Model names as panels
+p3 <- tibble(xmin = c(0, 1,2,3,4,5), xmax = c(1,2,3,4,5,6), fill = c("TCR Richness", "BCR Richness", "LogTMB", "PD-L1", "TIS-GEP", "RFE-optimal")) %>% 
+  ggplot() +
+  geom_rect(aes(ymin = 0, ymax = 1, xmin = xmin, xmax = xmax), color="grey50", fill="white") + #, fill = fill
+  geom_text(aes(y = .5, x = (xmin  + xmax) / 2, label = fill, fontface="bold", family="Palatino Linotype"), angle = 0,size=4.5) +
+  # scale_y_reverse(breaks = seq(1, 10), expand = expansion(mult = c(0, 0))) +
+  scale_x_continuous(breaks = seq(1, 10), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(breaks = c(0), expand = expansion(mult = c(0, 0))) +
+  guides(fill = FALSE) + labs(x="", y="") + 
+  theme_bw(base_family = "Palatino Linotype", base_size = 20) +
+theme(axis.text.x=element_blank(),
+      axis.ticks.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks.y=element_blank(),plot.margin = unit(c(0, 0, -2, 0), "cm"))
+
+# p3
+
+# Models type as panels
+p4 <- tibble(xmin = c(0,4.8), xmax = c(4.8,6), fill = c("Univariable Models", "Multivariable Models")) %>% 
+  ggplot() +
+  geom_rect(aes(ymin = 0, ymax = 1, xmin = xmin, xmax = xmax), color="grey50", fill="white") + #, fill = fill
+  geom_text(aes(y = .5, x = (xmin  + xmax) / 2, label = fill, fontface="bold", family="Palatino Linotype"), angle = 0,size=4.5) +
+  # scale_y_reverse(breaks = seq(1, 10), expand = expansion(mult = c(0, 0))) +
+  #scale_x_continuous(breaks = seq(0, 6)) +
+  scale_x_continuous(breaks = seq(0, 6),limits=c(0,6), expand = expansion(mult = c(.2, 0))) +
+  scale_y_continuous(breaks = c(0), expand = expansion(mult = c(0, 0))) +
+  guides(fill = FALSE) + labs(x="", y="") + 
+  theme_bw(base_family = "Palatino Linotype", base_size = 20) +
+theme(axis.text.x=element_blank(),
+      axis.ticks.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks.y=element_blank(),plot.margin = unit(c(-2, -2, -2, -2), "cm"))
+
+# p4
+
+
+p5 <- tibble(xmin = c(0,4.8), xmax = c(4.8,6), fill = c("Univariable Models", "Multivariable Models")) %>% 
+  ggplot() +
+  geom_rect(aes(ymin = 0, ymax = 1, xmin = xmin, xmax = xmax), color="grey50", fill="white") + #, fill = fill
+  geom_text(aes(y = .5, x = (xmin  + xmax) / 2, label = fill, fontface="bold", family="Palatino Linotype"), angle = 0,size=4.5) +
+  # scale_y_reverse(breaks = seq(1, 10), expand = expansion(mult = c(0, 0))) +
+  #scale_x_continuous(breaks = seq(0, 6)) +
+  scale_x_continuous(breaks = seq(0, 6),limits=c(0,6), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(breaks = c(0), expand = expansion(mult = c(0, 0))) +
+  guides(fill = FALSE) + labs(x="", y="") + 
+  theme_bw(base_family = "Palatino Linotype", base_size = 20) +
+theme(axis.text.x=element_blank(),
+      axis.ticks.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks.y=element_blank(),plot.margin = unit(c(-2, -2, -2, -2), "cm"),axis.title=element_blank(),axis.ticks.length = unit(0, "pt"))
+
+# p5
+
+# ROC AUC with models names as panels
+
+
+fig5.final<-(patchwork::plot_spacer()+p5+ patchwork::plot_layout(widths = c(1.4, 8.6)))/(p2 + fig5 + patchwork::plot_layout(widths = c(0.7, 9.3))) + patchwork::plot_layout(heights = c(0.4, 9.6))
+fig5.final
+
+```
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=8, fig.height=4}
+
+
+s1.feats <- roc_values$optPredictors[32] %>% str_split(", ") %>% magrittr::extract2(1) 
+s2.feats <-roc_values.blad.spec$optPredictors[32] %>% str_split(", ") %>% magrittr::extract2(1)
+s3.feats <- roc_values.mel.spec$optPredictors[32] %>% str_split(", ") %>% magrittr::extract2(1)
+
+
+s1.feats <- ifelse(s1.feats=="PDL1","PD-L1",
+       ifelse(s1.feats=="TCRArichness.ds","TCR richness",
+              ifelse(s1.feats=="TIS_sigscore","GEP",
+                     ifelse(s1.feats=="CD8cells","CD8+ T cells infiltration",
+                            ifelse(s1.feats=="BCR.IGHrichness.ds","BCR richness",
+                            ifelse(s1.feats=="TumorPurity","Tumor purity",
+                                   ifelse(s1.feats=="Bcells","B cells infiltration",
+                                          ifelse(s1.feats=="CD4cells","CD4+ T cells infiltration",
+                                                 s1.feats))))))))
+
+s2.feats <-ifelse(s2.feats=="PDL1","PD-L1",
+       ifelse(s2.feats=="TCRArichness.ds","TCR richness",
+              ifelse(s2.feats=="TIS_sigscore","GEP",
+                     ifelse(s2.feats=="CD8cells","CD8+ T cells infiltration",
+                            ifelse(s2.feats=="BCR.IGHrichness.ds","BCR richness",
+                            ifelse(s2.feats=="TumorPurity","Tumor purity",
+                                   ifelse(s2.feats=="Bcells","B cells infiltration",
+                                          ifelse(s2.feats=="CD4cells","CD4+ T cells infiltration",
+                                                 s2.feats))))))))
+  
+s3.feats <-ifelse(s3.feats=="PDL1","PD-L1",
+       ifelse(s3.feats=="TCRArichness.ds","TCR richness",
+              ifelse(s3.feats=="TIS_sigscore","GEP",
+                     ifelse(s3.feats=="CD8cells","CD8+ T cells infiltration",
+                            ifelse(s3.feats=="BCR.IGHrichness.ds","BCR richness",
+                            ifelse(s3.feats=="TumorPurity","Tumor purity",
+                                   ifelse(s3.feats=="Bcells","B cells infiltration",
+                                          ifelse(s3.feats=="CD4cells","CD4+ T cells infiltration",
+                                                 s3.feats))))))))
+
+s1_s2 = full_join(data.frame(key=s1.feats, s1.feats),
+          data.frame(key=s2.feats, s2.feats), by="key") %>%
+  dplyr::select(-key)
+
+s1_s3 = full_join(data.frame(key=s1.feats, s1.feats),
+          data.frame(key=s3.feats, s3.feats), by="key") %>%
+  dplyr::select(-key)
+
+df_feats <- cbind(s1_s2,s1_s3 %>% dplyr::select(-s1.feats))
+colnames(df_feats) <- c("Histology non-specific\n(Scheme 1)",
+                             "BLCA-specific\n(Scheme 2)",
+                             "SKCM-specific\n(Scheme 3)")
+rownames(df_feats) <- c("logTMB",
+                         "PD-L1",
+                         "TCR richness",
+                         "GEP",
+                        "CD8+ T cells infiltration",
+                        "BCR richness",
+                        "Tumor purity",
+                        "B cells infiltration",
+                        "CD4+ T cells infiltration")
+
+df_feats[,1] <- df_feats[,1] %>% is.na()
+df_feats[,2] <- df_feats[,2] %>% is.na()
+df_feats[,3] <- df_feats[,3] %>% is.na()
+
+df_feats=df_feats %>%
+  mutate(across(everything(), ~1-+as.logical(.x)))
+
+
+df_feats=df_feats %>% rownames_to_column(var="Feature")
+df_feats=df_feats %>% melt()
+df_feats$value <- ifelse(df_feats$value==1,"yes","no")
+df_feats$Feature <- factor(df_feats$Feature, levels=c("TCR richness",
+                                                         "BCR richness",
+                                                         "PD-L1",
+                                                         "logTMB",
+                                                         "GEP",
+                                                         "CD8+ T cells infiltration",
+                                                         "CD4+ T cells infiltration",
+                                                         "B cells infiltration",
+                                                         "Tumor purity") %>% rev)
+
+```
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=14, fig.height=4}
+
+df_feats$Feature <- factor(df_feats$Feature %>% as.character, levels=c("TCR richness",
+                                                         "BCR richness",
+                                                         "PD-L1",
+                                                         "logTMB",
+                                                         "GEP",
+                                                         "CD8+ T cells infiltration",
+                                                         "CD4+ T cells infiltration",
+                                                         "B cells infiltration",
+                                                         "Tumor purity"))
+
+df_feats$variable <- factor(df_feats$variable %>% as.character, levels=levels(df_feats$variable) %>% rev)
+
+featIn.Plot2 <-myTileHeatPlot.2(DF=df_feats, 
+                 xVar= "Feature",
+                 yVar="variable",
+                 xLabel="", 
+                 yLabel="", 
+                 labelVar=NULL, 
+                 colorVar="value",
+                 colorCont = F, 
+                 facetVar = NULL,removeLegend=TRUE )
+
+# featIn.Plot2
+```
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=15, fig.height=14}
+
+
+fig5.alt <- ggdraw() + 
+  draw_plot(fig5.final,x = 0, y = 0.15, width = 1, height = .85) +
+  draw_plot(featIn.Plot2,x = 0, y = 0, width = 1, height = .15) +
+  draw_plot_label(label = c("A", "B"), size = 15,
+                  x = c(0, 0), y = c(1, .15),family = "Palatino Linotype")
+
+cairo_pdf(filename = paste0(figuresPath,"Figure 5",".pdf"),width = 15, height=14)
+  print(fig5.alt)
+dev.off()
+
+
+# ggsave(fig5.alt, filename = paste0(figuresPath,"Figure 5",".png"), dpi = 600,width = 15, height=14,
+#        units = "in")
+```
+
+
+
+# SUPPLEMENTAL FIGURE 9 (FILE 13):  Predictive modeling workflow
+
+Produced using Visio.
+
+# SUPPLEMENTAL FIGURE 10 (FILE 14) : ROC-AUC comparisons of uni and multivariate RFE models performance
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+melted_mat.all2 <- melted_mat.all %>% dplyr::filter(Var1 %in% keep_models) %>% dplyr::filter(Var2 %in% keep_models) %>% droplevels()
+melted_mat.blad2 <- melted_mat.blad %>% dplyr::filter(Var1 %in% keep_models) %>% dplyr::filter(Var2 %in% keep_models) %>% droplevels()
+melted_mat.mel2 <- melted_mat.mel %>% dplyr::filter(Var1 %in% keep_models) %>% dplyr::filter(Var2 %in% keep_models) %>% droplevels()
+melted_mat.rcc2 <- melted_mat.rcc %>% dplyr::filter(Var1 %in% keep_models) %>% dplyr::filter(Var2 %in% keep_models) %>% droplevels()
+melted_mat.gas2 <- melted_mat.gas %>% dplyr::filter(Var1 %in% keep_models) %>% dplyr::filter(Var2 %in% keep_models) %>% droplevels()
+
+
+
+melted_mat.blad.spec$Var1 <- ifelse(as.character(melted_mat.blad.spec$Var1)=="M32 (RFE-SVM Radial): R ~ logTMB + PDL1 + BCR richness + TIS + B cells + TCR richness + CD8 cells + CD4 cells + Tumor Purity","M32 (RFE-SVM Radial): R ~ .",as.character(melted_mat.blad.spec$Var1))
+melted_mat.blad.spec$Var2 <- ifelse(as.character(melted_mat.blad.spec$Var2)=="M32 (RFE-SVM Radial): R ~ logTMB + PDL1 + BCR richness + TIS + B cells + TCR richness + CD8 cells + CD4 cells + Tumor Purity","M32 (RFE-SVM Radial): R ~ .",as.character(melted_mat.blad.spec$Var2))
+
+melted_mat.blad.spec2 <- melted_mat.blad.spec %>% dplyr::filter(Var1 %in% keep_models) %>% dplyr::filter(Var2 %in% keep_models) %>% droplevels()
+
+melted_mat.mel.spec$Var1 <- ifelse(as.character(melted_mat.mel.spec$Var1)=="M32 (RFE-SVM Linear): R ~ logTMB + B cells + BCR richness + TCR richness + Tumor Purity","M32 (RFE-SVM Linear)",as.character(melted_mat.mel.spec$Var1))
+melted_mat.mel.spec$Var2 <- ifelse(as.character(melted_mat.mel.spec$Var2)=="M32 (RFE-SVM Linear): R ~ logTMB + B cells + BCR richness + TCR richness + Tumor Purity","M32 (RFE-SVM Linear)",as.character(melted_mat.mel.spec$Var2))
+
+melted_mat.mel.spec2 <- melted_mat.mel.spec %>% dplyr::filter(Var1 %in% keep_models) %>% dplyr::filter(Var2 %in% keep_models) %>% droplevels()
+
+rocsCompare.scheme1_all <-corHeatmap2(melted_mat.all2) 
+rocsCompare.scheme1_blad <-corHeatmap2(melted_mat.blad2) 
+rocsCompare.scheme1_mel <-corHeatmap2(melted_mat.mel2) 
+rocsCompare.scheme1_rcc <-corHeatmap2(melted_mat.rcc2) 
+rocsCompare.scheme1_gas <-corHeatmap2(melted_mat.gas2) 
+rocsCompare.scheme2 <-corHeatmap2(melted_mat.blad.spec2) 
+rocsCompare.scheme3 <-corHeatmap2(melted_mat.mel.spec2) 
+
+```
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=27, fig.height=16}
+
+schemesROCcompPlots <-ggarrange(plotlist = list(rocsCompare.scheme1_all + ggtitle("BLCA + SKCM + KIRC")+ rremove("legend"), 
+                                                rocsCompare.scheme1_blad + ggtitle("BLCA")+ rremove("legend"),
+                                                rocsCompare.scheme1_mel + ggtitle("SKCM")+ rremove("legend"),
+                                                rocsCompare.scheme1_rcc + ggtitle("KIRC")+ rremove("legend"),
+                                                rocsCompare.scheme1_gas + ggtitle("STAD")+ rremove("legend"),patchwork::plot_spacer()+theme_nothing(),
+                          rocsCompare.scheme2 + theme(plot.margin=unit(c(1.5,0,0,0),"cm")) + ggtitle("BLCA") , 
+                                                rocsCompare.scheme3 + theme(plot.margin=unit(c(1.5,-1.0,0,2),"cm"))+ ggtitle("SKCM")), common.legend = TRUE, legend="bottom",font.label = list(size = 12, color = "black", face = "bold", family = "Palatino Linotype"))
+schemesROCcompPlots
+
+
+pROCcompare <- ggdraw() + 
+              draw_plot(schemesROCcompPlots,x = 0, y = 0, width = 1, height = .97) + 
+              draw_plot_label(label = c("A. SCHEME 1", "B. SCHEME 2", 
+                             "C. SCHEME 3"), size = 16,
+                     x = c(0,0,.333), y = c(1,.35,.35),family = "Palatino Linotype")
+
+
+pROCcompare
+
+cairo_pdf(filename = paste0(figuresPath,"Supplemental Figure S10",".pdf"),family = "Palatino Linotype", width = 27, height=14)
+      print(pROCcompare)
+dev.off()
+# ggsave(pROCcompare, filename = paste0(figuresPath,"Supplemental Figure S10",".tiff"), dpi = 600,width = 27, height=14, 
+#        units = "in")
+```
+
+
+# Tables with HR ratios
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=17, fig.height=13}
+
+categorical.4.tcga.aPD1$HR <- round(categorical.4.tcga.aPD1$HR,2)
+categorical.4.tcga.aPD1$Lower_CI <- round(categorical.4.tcga.aPD1$Lower_CI,2)
+categorical.4.tcga.aPD1$Upper_CI <- round(categorical.4.tcga.aPD1$Upper_CI,2)
+categorical.4.tcga.aPD1$p <- format(categorical.4.tcga.aPD1$p, scientific=T, digits=3)
+categorical.4.tcga.aPD1$`p-value` <- ifelse(categorical.4.tcga.aPD1$p %>% as.numeric()<= 0.05, paste0(categorical.4.tcga.aPD1$p,"***"),categorical.4.tcga.aPD1$p)
+categorical.4.tcga.aPD1$`Hazard ratio` <- paste0(categorical.4.tcga.aPD1$HR, 
+                                                 " (",categorical.4.tcga.aPD1$Lower_CI,"-",categorical.4.tcga.aPD1$Upper_CI,")")
+  
+hrs.all <-categorical.4.tcga.aPD1 %>% 
+                                  dplyr::select(-factor.id,-`signif.`,-p,-HR,-Lower_CI,-Upper_CI) %>%
+                                  setNames(c("project", "Feature","analysis","p","HR")) %>%
+                                  dplyr::select("analysis","project","Feature","HR","p") %>%
+                                  group_split(project) %>% 
+                                  set_names(categorical.4.tcga.aPD1$project %>% levels())
+
+hrs.skcm <- hrs.all$SKCM %>%
+                         group_split(analysis) %>% 
+                         set_names(hrs.all$SKCM$analysis %>% droplevels() %>% levels())
+
+hrs.skcm.f <- cbind(hrs.skcm$`Univariable - TCGA` %>% dplyr::select(Feature, HR, p),
+                    hrs.skcm$`Univariable - anti-PD-1/L1` %>% dplyr::select(HR, p),
+                    hrs.skcm$`Multivariable - anti-PD-1/L1` %>% dplyr::select(HR, p))
+
+hrs.skcm.f <- rbind(names(hrs.skcm.f),hrs.skcm.f) %>% setNames(c("","TCGA","","anti-PD-1/L1","","",""))
+hrs.skcm.f <- rbind(names(hrs.skcm.f),hrs.skcm.f) %>% setNames(c("","Univariable","","","","Multivariable",""))
+
+hrs.kirc <- hrs.all$KIRC %>%
+                         group_split(analysis) %>% 
+                         set_names(hrs.all$KIRC$analysis %>% droplevels() %>% levels())
+
+
+hrs.kirc.f <- cbind(hrs.kirc$`Univariable - TCGA` %>% dplyr::select(Feature, HR, p),
+                    hrs.kirc$`Univariable - anti-PD-1/L1` %>% dplyr::select(HR, p))
+
+hrs.kirc.f <- rbind(names(hrs.kirc.f),hrs.kirc.f) %>% setNames(c("","TCGA","","anti-PD-1/L1",""))
+hrs.kirc.f <- rbind(names(hrs.kirc.f),hrs.kirc.f) %>% setNames(c("","Univariable","","",""))
+
+
+
+hrs.blca <- hrs.all$BLCA %>%
+                         group_split(analysis) %>% 
+                         set_names(hrs.all$BLCA$analysis %>% droplevels() %>% levels())
+
+hrs.blca.f <- cbind(hrs.blca$`Univariable - TCGA` %>% dplyr::select(Feature, HR, p),
+                    hrs.blca$`Univariable - anti-PD-1/L1` %>% dplyr::select(HR, p),
+                    hrs.blca$`Multivariable - anti-PD-1/L1` %>% dplyr::select(HR, p))
+
+hrs.blca.f <- rbind(names(hrs.blca.f),hrs.blca.f) %>% setNames(c("","TCGA","","anti-PD-1/L1","","",""))
+hrs.blca.f <- rbind(names(hrs.blca.f),hrs.blca.f) %>% setNames(c("","Univariable","","","","Multivariable",""))
+
+
+hrs.stad <- hrs.all$STAD %>%
+                         group_split(analysis) %>% 
+                         set_names(hrs.all$STAD$analysis %>% droplevels() %>% levels())
+
+hrs.stad.f <- merge(x=hrs.stad$`Univariable - TCGA` %>% dplyr::select(Feature, HR, p),
+                    y=hrs.stad$`Univariable - anti-PD-1/L1` %>% dplyr::select(Feature, HR, p), by="Feature", all.x=T) %>% setNames(c("Feature", "HR", "p","HR","p"))
+
+hrs.stad.f <- rbind(names(hrs.stad.f),hrs.stad.f) %>% setNames(c("","TCGA","","anti-PD-1/L1",""))
+hrs.stad.f <- rbind(names(hrs.stad.f),hrs.stad.f) %>% setNames(c("","Univariable","","",""))
+
+```
+
+# SUPPLEMENTAL TABLE S3-6
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=17, fig.height=13}
+write.xlsx2(hrs.skcm.f, file=paste0(tablesPath,"/","Supplemental Tables S3-6.xlsx"), sheetName="Table S3 - SKCM", row.names=FALSE)
+write.xlsx2(hrs.kirc.f, file=paste0(tablesPath,"/","Supplemental Tables S3-6.xlsx"), sheetName="Table S4 - KIRC", append=TRUE, row.names=FALSE)
+write.xlsx2(hrs.blca.f, file=paste0(tablesPath,"/","Supplemental Tables S3-6.xlsx"), sheetName="Table S5 - BLCA", append=TRUE, row.names=FALSE)
+write.xlsx2(hrs.stad.f, file=paste0(tablesPath,"/","Supplemental Tables S3-6.xlsx"), sheetName="Table S6 - STAD", append=TRUE, row.names=FALSE)
+
+
+```
+
+# Session
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"F_paper_figures_tables_files.txt"))
+
+sessionInfo()
+
+```

@@ -1,0 +1,59 @@
+R version 4.1.0 (2021-05-18)
+Platform: x86_64-w64-mingw32/x64 (64-bit)
+Running under: Windows 10 x64 (build 19045)
+
+Matrix products: default
+
+locale:
+[1] LC_COLLATE=English_United States.1252  LC_CTYPE=English_United States.1252    LC_MONETARY=English_United States.1252
+[4] LC_NUMERIC=C                           LC_TIME=English_United States.1252    
+
+attached base packages:
+ [1] grid      parallel  stats4    stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+ [1] Amelia_1.8.0                Rcpp_1.0.9                  flextable_0.7.0             reconPlots_0.1.0            gridExtra_2.3              
+ [6] cowplot_1.1.1               reshape2_1.4.4              glmnet_4.1-4                Matrix_1.4-0                DivE_1.2                   
+[11] rgeos_0.5-9                 sp_1.4-7                    FME_1.3.6.2                 coda_0.19-4                 rootSolve_1.8.2.3          
+[16] deSolve_1.32                binfotron_0.5-01            ggrepel_0.9.1               pander_0.6.5                reshape_0.8.9              
+[21] immunarch_0.6.6             patchwork_1.1.2.9000        dtplyr_1.2.1                vegan_2.6-2                 lattice_0.20-45            
+[26] permute_0.9-7               entropy_1.3.1               strex_1.4.2                 ggpubr_0.4.0                hrbrthemes_0.8.0           
+[31] ggstatsplot_0.9.4.9000      estimate_1.0.13             splitstackshape_1.4.8       randomcoloR_1.1.0.1         RColorBrewer_1.1-3         
+[36] cluster_2.1.2               circlize_0.4.14             scales_1.2.0                dichromat_2.0-0.1           ggthemes_4.2.4             
+[41] data.table_1.14.2           ComplexHeatmap_2.10.0       forcats_0.5.1               purrr_0.3.4                 tidyr_1.2.0                
+[46] ggplot2_3.3.6               tidyverse_1.3.1             preprocessCore_1.56.0       e1071_1.7-9                 tibble_3.1.7               
+[51] plyr_1.8.7                  stringr_1.4.0               readr_2.1.2                 tximport_1.22.0             DESeq2_1.34.0              
+[56] SummarizedExperiment_1.24.0 Biobase_2.54.0              MatrixGenerics_1.6.0        matrixStats_0.62.0          GenomicRanges_1.46.1       
+[61] GenomeInfoDb_1.30.1         IRanges_2.28.0              S4Vectors_0.32.4            BiocGenerics_0.40.0         dplyr_1.0.9                
+[66] DT_0.22                     extrafont_0.18              tictoc_1.1                  rmarkdown_2.14              pacman_0.5.1               
+
+loaded via a namespace (and not attached):
+  [1] class_7.3-20           foreach_1.5.2          crayon_1.5.2           V8_4.2.2               MASS_7.3-57            nlme_3.1-157          
+  [7] backports_1.4.1        reprex_2.0.1           rlang_1.1.3            XVector_0.34.0         caret_6.0-92           readxl_1.4.0          
+ [13] performance_0.10.1.4   extrafontdb_1.0        limma_3.50.3           BiocParallel_1.28.3    rjson_0.2.21           bit64_4.0.5           
+ [19] glue_1.6.2             pheatmap_1.0.12        AnnotationDbi_1.56.2   UpSetR_1.4.0           haven_2.5.1            tidyselect_1.1.2      
+ [25] XML_3.99-0.9           zoo_1.8-10             xtable_1.8-4           magrittr_2.0.3         evaluate_0.18          gdtools_0.2.4         
+ [31] cli_3.6.2              zlibbioc_1.40.0        rstudioapi_0.13        bslib_0.3.1            rpart_4.1.16           shiny_1.7.1           
+ [37] xfun_0.35              clue_0.3-60            parameters_0.20.0.7    KEGGREST_1.34.0        listenv_0.8.0          Biostrings_2.62.0     
+ [43] png_0.1-7              future_1.26.1          ipred_0.9-13           zeallot_0.1.0          withr_2.5.0            bitops_1.0-7          
+ [49] cellranger_1.1.0       hardhat_1.2.0          pROC_1.18.0            pillar_1.8.0           GlobalOptions_0.1.2    cachem_1.0.6          
+ [55] multcomp_1.4-20        fs_1.5.2               flexmix_2.3-17         kernlab_0.9-30         GetoptLong_1.0.5       paletteer_1.4.0       
+ [61] vctrs_0.4.1            ellipsis_0.3.2         generics_0.1.3         lava_1.6.10            tools_4.1.0            foreign_0.8-82        
+ [67] munsell_0.5.0          emmeans_1.7.4-1        proxy_0.4-26           DelayedArray_0.20.0    fastmap_1.1.0          compiler_4.1.0        
+ [73] abind_1.4-5            httpuv_1.6.5           GenomeInfoDbData_1.2.7 prodlim_2019.11.13     utf8_1.2.2             later_1.3.0           
+ [79] recipes_1.0.1          jsonlite_1.8.3         carData_3.0-5          estimability_1.3       genefilter_1.76.0      promises_1.2.0.1      
+ [85] car_3.1-1              doParallel_1.0.17      checkmate_2.1.0        sandwich_3.0-2         Rtsne_0.16             survival_3.3-1        
+ [91] yaml_2.3.6             systemfonts_1.0.4      prabclus_2.3-2         htmltools_0.5.3        minpack.lm_1.2-2       memoise_2.0.1         
+ [97] modeltools_0.2-23      locfit_1.5-9.5         digest_0.6.29          assertthat_0.2.1       mime_0.12              Rttf2pt1_1.3.10       
+[103] bayestestR_0.13.0.5    RSQLite_2.2.13         future.apply_1.9.0     blob_1.2.3             labeling_0.4.2         shinythemes_1.2.0     
+[109] splines_4.1.0          rematch2_2.1.2         fpc_2.2-9              RCurl_1.98-1.6         broom_1.0.1            hms_1.1.2             
+[115] modelr_0.1.8           base64enc_0.1-3        colorspace_2.0-3       shape_1.4.6            nnet_7.3-17            sass_0.4.1            
+[121] mclust_5.4.9           mvtnorm_1.1-3          ggseqlogo_0.1          fansi_1.0.3            tzdb_0.3.0             parallelly_1.32.1     
+[127] ModelMetrics_1.2.2.2   R6_2.5.1               factoextra_1.0.7       lifecycle_1.0.1        statsExpressions_1.3.3 zip_2.2.0             
+[133] datawizard_0.6.5       curl_5.2.0             ggsignif_0.6.3         minqa_1.2.5            jquerylib_0.1.4        robustbase_0.95-0     
+[139] TH.data_1.1-1          iterators_1.0.14       gower_1.0.0            htmlwidgets_1.5.4      officer_0.4.4          crosstalk_1.2.0       
+[145] rvest_1.0.2            mgcv_1.8-40            globals_0.15.1         insight_0.18.8         codetools_0.2-18       lubridate_1.8.0       
+[151] dbplyr_2.1.1           correlation_0.8.3      gtable_0.3.1           DBI_1.1.2              ggalluvial_0.12.3      httr_1.4.7            
+[157] highr_0.9              stringi_1.7.8          vroom_1.6.0            uuid_1.1-0             farver_2.1.1           diptest_0.76-0        
+[163] annotate_1.72.0        magick_2.7.3           timeDate_4021.104      xml2_1.3.3             geneplotter_1.72.0     DEoptimR_1.0-11       
+[169] bit_4.0.5              pkgconfig_2.0.3        rstatix_0.7.0          knitr_1.41            

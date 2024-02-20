@@ -1,0 +1,489 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center> Uni and Multivariate survival analysis for anti-PD(L)1 public and restricted data </center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 9 October 2019. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 6
+    number_sections: true
+    #df_print: paged
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1', progress=FALSE)
+unlink("scripts/main/C_02_aPD1_survival_analysis_cache", recursive = TRUE)
+```
+
+
+```{r,warning=F, message=F}
+## Clear R-workspace
+# rm(list=ls(all=TRUE))
+
+## Close all graphic devices
+graphics.off()
+#####################
+### Load packages ###
+#####################
+library(pacman)
+
+pacman::p_load(extrafont,DT,dplyr,tibble,survminer,survival, ggplot2, hrbrthemes, grid, gridExtra, cowplot,Amelia,data.table, tidytidbits,survivalAnalysis,gtsummary,purrr,plyr, pmsampsize,boot,pec,mosaic,boot.pval, stringr)
+
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsMainPath<- paste0(scriptsPath, "main/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+antiPDL1publicInputData <- paste0(projectDataPath,"antiPD(L)1_public/")
+otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+# Output
+projectOutDataPath <- paste0("output/data_files/")
+# tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+antiPDL1publicIntermediateData <- paste0(projectOutDataPath,"antiPD(L)1_public/")
+
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+
+######################################
+## Create intermediate output paths ##
+######################################
+if (!dir.exists(paste0(projectOutDataPath,"survival/"))) {dir.create(paste0(projectOutDataPath,"survival/"))}
+
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"aPD1_survival_analysis_functions.R"), local=T)
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+######################
+### Model variables ###
+######################
+
+modelTypeA <- "_TCRArichnessIGH.ds"
+modelTypeB <- "_noLIU"
+modelTypeC <- "_mintcr4bcr10"
+
+```
+
+# Loading Sample  and Clone data
+
+We are using the data that were TCRa min 4 clones, BCR igh min 10 clones
+
+```{r dataLoadSamples,warning=F, message=F,eval=TRUE}
+immdata.TcrBcr.full.red <- loadRData(paste0(antiPDL1publicIntermediateData,"immdata.TcrBcr.full.red",modelTypeA,modelTypeB,modelTypeC,".RData"))
+immdata.TcrBcr.full.red$response <- ifelse(immdata.TcrBcr.full.red$response=="CR+PR","CRPR",immdata.TcrBcr.full.red$response)
+
+```
+
+
+We are keeping all samples, irrespective of response, since we are doing survival analysis
+
+```{r,warning=F, message=F,eval=TRUE}
+table(immdata.TcrBcr.full.red$response)
+
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(immdata.TcrBcr.full.red %>% dplyr::select(run_accession,response,tissue) %>% group_by(tissue,response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of responders/non-responders in all tissues'
+)
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(immdata.TcrBcr.full.red %>% dplyr::filter(complete.cases(TMB)) %>% dplyr::select(run_accession,response,tissue) %>% group_by(tissue,response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of responders/non-responders in all tissues that have TMB'
+)
+```
+
+Preparing other variables and dataframes necessary for the analysis.
+
+```{r,warning=F, message=F,eval=TRUE}
+## EXTRACT RESPONSE, NOMINAL, MEASURE VARIABLES FROM DATA
+response.var <- "response"
+nominal.vars <- c("dataset","tissue","gender")
+measure.vars <-colnames(immdata.TcrBcr.full.red)[c(2:10,12,32:43)]
+measure.vars <- measure.vars[c(6,22,1:3,20,21,4:5,10,7:9,11:19)]
+
+
+## CHECK INFINITE LOG TMB VALUES
+immdata.TcrBcr.full.red[which(is.infinite(immdata.TcrBcr.full.red$logTMB)),]
+
+## Extract tissues in data so far
+tissues <- unique(immdata.TcrBcr.full.red$tissue)
+
+# Which are the covariates I am considering
+covariatesIn <- measure.vars[c(1:2,4:7,14:16)]
+responseVar <- "response"
+
+
+## DATA TO WORK WITH
+# 
+# immdata.TcrBcr.ALL.ready <- immdata.TcrBcr.full.red.sub.filt %>% dplyr::filter(dataset %notin% c("Liu") ) %>% droplevels() # All tissues, PD, CR, PR, complete data
+
+
+```
+
+
+# Data Exploration {.tabset .tabset-fade .tabset-pills}
+
+
+**TOTAL available data**
+
+***
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+nrow(immdata.TcrBcr.full.red)
+```
+
+**Table of available data per dataset**
+
+***
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+table(immdata.TcrBcr.full.red$dataset)
+```
+
+**Table of available data per tissue**
+
+***
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+table(immdata.TcrBcr.full.red$tissue)
+```
+
+
+```{r,warning=F, message=F,results='asis', fig.width=10, fig.height=6}
+
+mycancertypes.final <-unique(immdata.TcrBcr.full.red$tissue)
+mycancertypes.final <- mycancertypes.final[c(2,4,1,3)]
+# parameters <- colnames(immdata.TcrBcr.full.red.sub)[c(4,42,43,32,33,34,3,41)]
+# labels <- c("PD-L1 expression","logTMB","BCR Richness","B cells infiltration","CD8+ T cells infilitration","CD4+ T cells infilitration",
+#             "T-cell inflamed GEP", "Tumor Purity")
+```
+
+
+```{r,warning=F, message=F,results='asis', fig.width=8, fig.height=8}
+colnames(immdata.TcrBcr.full.red)[c(7,43,32,4)] <- c("TCR_Richness","BCR_Richness","B_cells","PD_L1")
+featuresIn <- colnames(immdata.TcrBcr.full.red)[c(4,42,43,7,32,33,34,3,41)]
+featuresInLabels <- c("PD-L1 expression","logTMB","BCR Richness","TCR Richness","B cells infiltration","CD8+ T cells infiltration","CD4+ T cells infiltration",
+            "T-cell inflamed GEP", "Tumor Purity")
+
+tissues<- unique(immdata.TcrBcr.full.red$tissue)
+tissues <- tissues[c(2,4,1,3)]
+```
+
+
+
+Select rows (patient IDs) for which we have all data:
+
+* TCR richness, from immune pancancer data not clone data
+* BCR richness
+* Immune infiltration from DanaherZ CIBERSORT : B cells, CD8 T cells, CD4 T cells
+* TMB only for TP data not NT
+* GEP, 
+* PD-L1 (not TuTack since it's not main part of analysis)
+* Tumor Purity (ESTIMATE)
+* Survival data, OS OS.time
+
+```{r,warning=F, message=F}
+featuresSelected <- c("run_accession", "tissue","PD_L1","logTMB","BCR_Richness","TCR_Richness",
+                      "B_cells", "CD8cells", "CD4cells","TIS_sigscore", "TumorPurity","OS","OS.time","PFS","PFS.time","age","gender")
+
+extraFeatures <- c("StromalScore", "ImmuneScore")
+
+featuresIn <- c("TCR_Richness","BCR_Richness","logTMB","PD_L1","TIS_sigscore",
+                      "CD8cells", "CD4cells","B_cells",  "TumorPurity")
+featuresInLabels <- c("TCR Richness","BCR Richness","logTMB","PD-L1 expression","T-cell inflamed GEP", "CD8+ T cells infiltration","CD4+ T cells infiltration","B cells infiltration",
+            "Tumor Purity")
+## FOR TP data
+immdata.TcrBcr.full.red.sub <- immdata.TcrBcr.full.red %>% dplyr::select(all_of(featuresSelected)) %>% droplevels() %>% distinct()
+immdata.TcrBcr.full.red.sub.extra <- immdata.TcrBcr.full.red %>% dplyr::select(all_of(c(featuresSelected,extraFeatures))) %>% droplevels() %>% distinct()
+
+# Keep rows where at least on of the features of interested is not NA
+dim(immdata.TcrBcr.full.red.sub)
+immdata.TcrBcr.full.red.sub <-immdata.TcrBcr.full.red.sub[rowSums(is.na(immdata.TcrBcr.full.red.sub[,3:11])) != 9,]
+dim(immdata.TcrBcr.full.red.sub)
+dim(immdata.TcrBcr.full.red.sub.extra)
+immdata.TcrBcr.full.red.sub.extra <-immdata.TcrBcr.full.red.sub.extra[rowSums(is.na(immdata.TcrBcr.full.red.sub.extra[,3:11])) != 9,]
+dim(immdata.TcrBcr.full.red.sub.extra)
+
+
+# There is a duplicated patient
+```
+
+Look again at missing values
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=12}
+visDF <- immdata.TcrBcr.full.red.sub
+
+missmap(visDF, col=c("Indian red", "grey"), legend=FALSE,x.cex=1,margins=c(9,5))
+```
+
+We are not using complete data function since we see that depending on the feature, lots of data are missing.
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=12}
+# Let's summarize the TCGA biospecimen data we just loaded
+# Number of patients per project
+immdata.TcrBcr.full.red.sub.table <-immdata.TcrBcr.full.red.sub %>% dplyr::select(tissue,run_accession) %>% group_by(tissue) %>% distinct() %>% dplyr::summarize(n())
+
+```
+
+
+Define TCGA projects included in analysis & subset tables accordingly.
+Excluding the following TCGA cohorts/molecular subtypes cohorts:
+
+* THYM
+* DLBC
+* COAD MSI low
+* BRCA Her2
+* BRCA Luminal A
+* BRCA Luminal B
+* BRCA
+* BRCA Normal
+* COAD
+
+Eventually we are also excluding KIRP (papillary).
+
+```{r,warning=F, message=F}
+#mycancertypes.final
+#tissues
+
+# Make project a factor with levels
+immdata.TcrBcr.full.red.sub$tissue <- factor(immdata.TcrBcr.full.red.sub$tissue, levels=mycancertypes.final)
+immdata.TcrBcr.full.red.sub.extra$tissue <- factor(immdata.TcrBcr.full.red.sub.extra$tissue, levels=mycancertypes.final)
+
+```
+
+**Summary Tables of TCGA data for this analysis**
+
+***
+
+```{r, eval = TRUE}
+
+datatable(immdata.TcrBcr.full.red.sub.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per tissue'
+)
+```
+
+
+
+
+# Calculate minimum sample size required for the development of a new multivariable prediction model
+
+Using the criteria proposed by Riley et al. (2018) <doi:10.1002/sim.7992>.
+These aim to minimise the overfitting and to ensure precise estimation of key parameters in the prediction model.
+
+pmsampsize computes the minimum sample size required for the development of a new multivariable prediction model using the criteria proposed by Riley et al. 2018. pmsampsize can be used to calculate the minimum sample size for the development of models with continuous, binary or survival (time-to-event) outcomes. Riley et al. lay out a series of criteria the sample size should meet. These aim to minimise the overfitting and to ensure precise estimation of key parameters in the prediction model.
+
+The sample size calculation requires the user to pre-specify (e.g. based on previous evidence)
+the anticipated R-squared of the model, and the average outcome value and standard deviation of
+outcome values in the population of interest.
+For binary or survival (time-to-event) outcomes, there are three criteria:
+i) small overfitting defined by an expected shrinkage of predictor effects by 10% or less,
+ii) small absolute difference of 0.05 in the model’s apparent and adjusted Nagelkerke’s R-squared
+value, and
+iii) precise estimation (within +/- 0.05) of the average outcome risk in the population for a key
+timepoint of interest for prediction.
+
+
+```{r,warning=F, message=F,eval=TRUE}
+## Survial outcomes (Cox prediction models)
+# Use pmsampsize to calculate the minimum sample size required for developing
+# a multivariable prediction model with a survival outcome using 30 candidate
+# predictors. We know an existing prediction model in the same field has an
+# R-squared adjusted of 0.051. Further, in the previous study the mean
+# follow-up was 2.07 years, and overall event rate was 0.065. We select a
+# timepoint of interest for prediction using the newly developed model of 2
+# years
+pmsampsize(type = "s", rsquared = 0.051, parameters = 2, rate = 0.5,
+timepoint = 4, meanfup = 1)
+
+```
+
+
+# Cox proportional hazards model & KM PLOTS {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,eval=TRUE}
+## HERE we define for which parameters we want to do univariate analysis, and which to include in the multivariate survival analysis. 
+## PLEASE define name as it is on the csv file, the name needs to be in BRACKETS
+features <- featuresIn
+
+## Define which columns include survival data
+OS_time <- c("OS.time")
+OS_status <- c("OS")
+# PFS_time <- c("PFS.time")
+# PFS_status <- c("PFS")
+
+# # KM plots labels
+# xlabel=".OS.months"
+
+## DEFINE WHICH COLUMNS ARE CATEGORICAL
+categ_feats <-featuresIn
+## DEFINE WHICH COLUMNS ARE NUMERICAL
+# we also add the status and time columns
+numeric_feats <-featuresIn
+# ## DEFINE IF YOU ARE DOING OS OR PFS
+# surv_time <-OS_time
+# surv_status <-OS_status
+# surv_time_label <- "OS"
+# dataDF <- tcgaData.tp.sub.filt
+
+finallabels <- featuresInLabels
+names(finallabels) <- featuresIn
+```
+
+# Multiple Univariate Analyses - INCLUDING MISSING DATA {.tabset .tabset-fade .tabset-pills}
+
+Perform Cox regression on right-censored data.
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=15, fig.height=8, eval=TRUE}
+# SKCM - melanoma
+# KIRC - RCC
+# BLCA - bladder
+# STAD - gastric
+
+# for UNI and MULTI
+# for categorical and continuous
+## dont remove missing
+```
+
+
+## Categorical {.tabset .tabset-fade .tabset-pills}
+
+### Across all cohorts, together {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,results = 'asis', fig.width=15, fig.height=8, eval=TRUE}
+uni.cat.meta <-multiUniSurvival(immdata.TcrBcr.full.red.sub,OS_time,OS_status,"OS", featuresIn,finallabels, removeMis=FALSE, filterCohort=FALSE, filterVar=NULL,cohortSelected=NULL, categTrans=featuresIn, transBy="median")
+
+```
+
+
+### 4 histologies {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,results = 'asis', fig.width=15, fig.height=8, eval=TRUE}
+
+uni.cat.4 <- sapply(mycancertypes.final, function(x) multiUniSurvival(immdata.TcrBcr.full.red.sub,OS_time,OS_status,"OS", featuresIn,finallabels, removeMis=FALSE, filterCohort=TRUE, filterVar="tissue",cohortSelected=x, categTrans=featuresIn, transBy="median"),simplify = FALSE)
+
+
+
+```
+
+
+# Multivariable Analyses - INCLUDING MISSING DATA {.tabset .tabset-fade .tabset-pills}
+
+Perform Cox regression on right-censored data.
+
+
+## Categorical {.tabset .tabset-fade .tabset-pills}
+
+### Across all cohorts, together {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,results = 'asis', fig.width=15, fig.height=8, eval=TRUE}
+multi.cat.meta <-multiUniSurvival(immdata.TcrBcr.full.red.sub,OS_time,OS_status,"OS", featuresIn,finallabels, removeMis=FALSE, filterCohort=FALSE, filterVar=NULL,cohortSelected=NULL, categTrans=featuresIn, transBy="median",multi=TRUE)
+
+```
+
+
+### 4 histologies {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,results = 'asis', fig.width=15, fig.height=8, eval=TRUE}
+
+multi.cat.4  <- sapply(mycancertypes.final, function(x) multiUniSurvival(immdata.TcrBcr.full.red.sub,OS_time,OS_status,"OS", featuresIn,finallabels, removeMis=FALSE, filterCohort=TRUE, filterVar="tissue",cohortSelected=x, categTrans=featuresIn, transBy="median",multi=TRUE),simplify = FALSE)
+# 
+# multiUniSurvival(immdata.TcrBcr.full.red.sub,OS_time,OS_status,"OS", featuresIn,finallabels, removeMis=FALSE, filterCohort=TRUE, filterVar="tissue",cohortSelected="RCC", categTrans=featuresIn, transBy="median",multi=TRUE)
+
+```
+
+
+
+
+# Multivariate survival with bootstrapping
+
+Calculating bootstrapped p values and CIs, as well as bootstrapped survival models with backward selection.
+
+```{r multiBoot,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=10, eval=TRUE}
+
+multi.boot <- sapply(mycancertypes.final, function(x) multiSurv.BackIndepBoot(immdata.TcrBcr.full.red.sub,OS_time,OS_status,"OS", featuresIn,finallabels, removeMis=FALSE, filterCohort=TRUE, filterVar="tissue",cohortSelected=x, categTrans=featuresIn, transBy="median",multi=TRUE,scale=FALSE,alreadyCat=NULL,bootFreq=0.2),simplify = FALSE)
+
+
+```
+
+# Save data
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=10, eval=TRUE}
+## SAVE DATA
+### UNIVARIATE
+
+## CAT
+save(uni.cat.meta, file = paste0(projectOutDataPath,"survival/","uni.cat.meta.aPD1",Rdata.suffix))
+save(uni.cat.4, file = paste0(projectOutDataPath,"survival/","uni.cat.4.aPD1",Rdata.suffix))
+
+
+### MULTIVARIATE
+## CAT
+save(multi.cat.meta, file = paste0(projectOutDataPath,"survival/","multi.cat.meta.aPD1",Rdata.suffix))
+save(multi.cat.4, file = paste0(projectOutDataPath,"survival/","multi.cat.4.aPD1",Rdata.suffix))
+
+# Multivariate with bootstrapping
+save(multi.boot, file = paste0(projectOutDataPath,"survival/","multi.cat.BOOT.aPD1",Rdata.suffix))
+
+```
+
+
+# Session Info
+
+```{r,warning=F, message=F,fig.show = 'hold', out.width = '100%',dev='svg'}
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"C_02_aPD1_survival_analysis.txt"))
+
+sessionInfo()
+```

@@ -1,0 +1,1313 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center> Post-processing predictive modeling results for Scheme 3 (melanoma specific)</center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 16 February 2021. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 6
+    number_sections: true
+    #df_print: paged
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1')
+unlink("scripts/main/E_06_aPD1_RFE_multivariate_postProcessing_Scheme3_cache", recursive = TRUE)
+```
+
+
+
+```{r,warning=F, message=F}
+# ## Clear R-workspace
+# rm(list=ls(all=TRUE))
+
+## Close all graphic devices
+graphics.off()
+#####################
+### Load packages ###
+#####################
+library(pacman)
+
+pacman::p_load(extrafont,DT,stringr,dplyr,plyr,tibble,tidyverse,data.table, ggplot2,strex,Hmisc,hrbrthemes,
+               ggpubr,mlbench,Amelia,caret, DMwR, DataExplorer,FactoMineR,OutlierDetection,factoextra, parallel,doParallel,scales,precrec,
+               RColorBrewer, pander, rlist,
+               reconPlots,
+               survival,
+               survminer, strex, ggplotify,flextable,ggsci, splitstackshape, ggthemes,dichromat)
+
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+antiPDL1publicInputData <- paste0(projectDataPath,"antiPD(L)1_public/")
+otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+# Output
+projectOutDataPath <- paste0("output/data_files/")
+tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+antiPDL1publicIntermediateData <- paste0(projectOutDataPath,"antiPD(L)1_public/")
+
+  
+figuresPath <- paste0("output/figures/")
+tablesPath <- paste0("output/tables/")
+modelsPath <- paste0("output/models/")
+
+# #Intermediate output
+testDataOut <-paste0(modelsPath,"test_data/")
+rocCompareOut <-paste0(modelsPath,"roc_compare/")
+modelsInterm <- paste0(modelsPath,"models_interm_files/")
+
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+######################################
+## Create intermediate output paths ##
+######################################
+if (!dir.exists(testDataOut)) {dir.create(testDataOut)}
+if (!dir.exists(rocCompareOut)) {dir.create(rocCompareOut)}
+if (!dir.exists(modelsInterm)) {dir.create(modelsInterm)}
+
+
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"aPD1_RFE_multivariate_functions.R"))
+
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+# Other script variables
+modelTypeA <- "_TCRArichnessIGH.ds"
+modelTypeB <- "_noLIU"
+modelTypeC <- "_mintcr4bcr10"
+
+#####################
+### SCRIPT VARIABLES ###
+#####################
+run_clean <- FALSE
+```
+
+
+
+# Loading Sample and Clone data
+
+We are using the data that were TCRa min 4 clones, BCR igh min 10 clones
+
+```{r dataLoadSamples,warning=F, message=F,eval=TRUE}
+immdata.TcrBcr.full.red <- loadRData(paste0(antiPDL1publicIntermediateData,"immdata.TcrBcr.full.red",modelTypeA,modelTypeB,modelTypeC,".RData"))
+immdata.TcrBcr.full.red$response <- ifelse(immdata.TcrBcr.full.red$response=="CR+PR","CRPR",immdata.TcrBcr.full.red$response)
+
+
+```
+
+
+# Looking at available data
+
+First filtering, to keep only CR, PR, PD samples
+```{r,warning=F, message=F,eval=TRUE}
+## FILTER DATA FOR PD, CR, PR (.sub)
+immdata.TcrBcr.full.red.sub <- immdata.TcrBcr.full.red %>% dplyr::filter(response %in% c("PD","CRPR")) %>% droplevels()
+
+```
+
+From `r nrow(immdata.TcrBcr.full.red)` samples (that include all responses), we drop down to `r nrow(immdata.TcrBcr.full.red.sub)`, that are CR, PR, PD pre-treatment samples.
+
+
+Looking at how many of the data have TMB info
+
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(immdata.TcrBcr.full.red.sub %>% dplyr::filter(complete.cases(TMB)) %>% dplyr::select(run_accession,response,tissue) %>% group_by(tissue,response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of responders/non-responders in all tissues that have TMB'
+)
+```
+
+
+From `r nrow(immdata.TcrBcr.full.red.sub)` CRPR, PD samples, we drop down to `r nrow(immdata.TcrBcr.full.red.sub %>% dplyr::filter(complete.cases(TMB)))`, that are CR, PR, PD pre-treatment samples.
+The only tissues we can actually use for the model are melanoma and bladder, that have more than 100 samples. 
+
+Prepare other variables and dataframes necessary for the analysis.
+
+```{r,warning=F, message=F,eval=TRUE}
+## EXTRACT RESPONSE, NOMINAL, MEASURE VARIABLES FROM DATA
+response.var <- "response"
+nominal.vars <- c("dataset","tissue","gender")
+
+measure.vars <-colnames(immdata.TcrBcr.full.red.sub)[c(2:10,12,32:43)]
+measure.vars <- measure.vars[c(6,22,1:3,20,21,4:5,10,7:9,11:19)]
+
+
+
+## CHECK INFINITE LOG TMB VALUES
+immdata.TcrBcr.full.red.sub[which(is.infinite(immdata.TcrBcr.full.red.sub$logTMB)),]
+
+## Extract tissues in data so far
+tissues <- unique(immdata.TcrBcr.full.red.sub$tissue)
+
+# Keep samples with TMB (.tmb)
+immdata.TcrBcr.full.red.sub.tmb <- immdata.TcrBcr.full.red.sub %>% dplyr::filter(complete.cases(logTMB)) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb)
+# ONLY MELANOMA, WITH TMB (.tmb.MEL)
+immdata.TcrBcr.full.red.sub.tmb.MEL <- immdata.TcrBcr.full.red.sub.tmb %>% dplyr::filter(tissue=="melanoma") %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb.MEL)
+## ALL MELANOMA AND BLADDER, WITH TMB (.tmb.ALL)
+immdata.TcrBcr.full.red.sub.tmb.ALL <- immdata.TcrBcr.full.red.sub.tmb %>% dplyr::filter(tissue %in% c("melanoma","bladder")) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb.ALL)
+# ALL DATA, MELANOMA AND BLADDER, BUT LEAVE MISSING TMB (.ALL)
+immdata.TcrBcr.full.red.sub.ALL <- immdata.TcrBcr.full.red.sub %>% dplyr::filter(tissue %in% c("melanoma","bladder")) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.ALL)
+
+# Which are the covariates I am considering
+covariatesIn <- measure.vars[c(1:2,4:7,14:16)]
+responseVar <- "response"
+
+immdata.TcrBcr.full.red <-immdata.TcrBcr.full.red.sub  %>% droplevels()
+
+immdata.TcrBcr.full.red.sub <- immdata.TcrBcr.full.red.sub %>% droplevels()
+
+## INSTEAD OF FILTERING FOR NO MISSING TMB, I DO THAT FOR ALL COVARIATES OF INTEREST
+# Remove rows that have outliers/missing values since I get errors with Knn imputation
+immdata.TcrBcr.full.red.sub.ALL.filt <- immdata.TcrBcr.full.red.sub.ALL %>% filter_at(vars(covariatesIn), all_vars(complete.cases(.))) %>% droplevels()
+# DOING THE SAME FOR THE ORIGINAL DATA - USE THIS WHEN TESTING
+# these data include other tissues apart from melanoma and bladder
+immdata.TcrBcr.full.red.sub.filt <- immdata.TcrBcr.full.red.sub %>% filter_at(vars(covariatesIn), all_vars(complete.cases(.))) %>% droplevels()
+
+# FINAL DATA FOR MODELLING
+# Remove the Liu dataset for the model testing
+immdata.TcrBcr.BLAD.MEL.ready <-immdata.TcrBcr.full.red.sub.ALL.filt %>% dplyr::filter(dataset %notin% c("Liu") ) %>% droplevels() # All melanoma & bladder, PD, CR, PR, complete data
+immdata.TcrBcr.ALL.ready <- immdata.TcrBcr.full.red.sub.filt %>% dplyr::filter(dataset %notin% c("Liu") ) %>% droplevels() # All tissues, PD, CR, PR, complete data
+
+## For gastric
+immdata.TcrBcr.full.red.sub.filt.gastric <- immdata.TcrBcr.full.red.sub %>% dplyr::filter(tissue %in% c("gastric") ) %>%  
+                                            filter_at(vars(covariatesIn[-6]), all_vars(complete.cases(.))) %>% droplevels()
+
+```
+# Preprocessing {.tabset .tabset-fade .tabset-pills}
+
+The data need to be preprocessed, centered, scaled.
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+DF <- immdata.TcrBcr.full.red.sub.filt
+# KEEP ALL DATA, dont deal with NA
+DF.complete <- DF %>% column_to_rownames(var="run_accession") %>% dplyr::select(c(responseVar,covariatesIn)) %>% dplyr::filter(complete.cases(.)) %>% droplevels()
+DF.complete[[responseVar]] <- as.factor(DF.complete[[responseVar]])
+levels(DF.complete[[responseVar]]) <- c("CRPR","PD")
+DF.complete <-DF.complete[,c(responseVar,covariatesIn)]
+
+
+## Selecet train data
+set.seed(3456)
+training.samples <- DF.complete$response %>% 
+  createDataPartition(p = 0.8, list = FALSE)
+train.data  <- DF.complete[training.samples, ]
+test.data <- DF.complete[-training.samples, ]
+
+x <- DF.complete %>% dplyr::select(-response)
+y <- DF.complete$response
+x_test <-x[-training.samples, ]
+y_test <-y[-training.samples]
+
+# tRAIN
+pP <- preProcess(train.data, method = c('knnImpute', 'center', 'scale'))
+train.pP <- predict(pP, train.data)
+## FULL DATA
+pP.full <- preProcess(DF %>% dplyr::select(c(responseVar,covariatesIn)) , method = c('knnImpute', 'center', 'scale'))
+DF.pP <- predict(pP.full, DF %>% column_to_rownames(var="run_accession") %>% dplyr::select(c(responseVar,covariatesIn)))
+
+```
+
+## Histograms 
+
+TRAIN DATA
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+plot_histogram(train.pP)
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+plot_histogram(train.data)
+```
+
+# PCA {.tabset .tabset-fade .tabset-pills}
+
+## With preprocessing
+
+Data centered and scaled and imputed
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+data_full <- DF.pP %>% dplyr::select(c(responseVar,covariatesIn))
+pca_axis <-list(c(1,2),c(3,4),c(5,6),c(7,8))#,c(9,10),c(11,12)
+# pca_axis <-list(c(1,2))
+
+pca_plots<-lapply(1:length(pca_axis), function(x) pca_biPlot(data_full,responseVar,NULL,covariatesIn,NULL,as.factor(data_full$response),"response",axes=pca_axis[[x]]))
+
+# n<-round(length(pca_plots)/2);
+n<-length(pca_plots);
+
+graphCols <-ceiling(n/floor(sqrt(n)));
+graphRows<-floor(sqrt(n))
+
+pca_plots.all<-ggpubr::ggarrange(plotlist = pca_plots, nrow = graphRows,ncol = graphCols, common.legend = TRUE, legend = "bottom")
+
+annotate_figure(pca_plots.all,
+               top = text_grob("FULL DATA - preprocessed", color = "black", face = "bold", size = 14))
+```
+
+
+## Without preprocessing
+
+Data not scaled not centered, not imputed, so filtering for complete cases
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+data_full <- DF %>% dplyr::select(c(responseVar,covariatesIn)) %>% dplyr::filter(complete.cases(.)) %>% droplevels()
+pca_axis <-list(c(1,2),c(3,4),c(5,6),c(7,8))#,c(9,10),c(11,12)
+# pca_axis <-list(c(1,2))
+
+pca_plots<-lapply(1:length(pca_axis), function(x) pca_biPlot(data_full,responseVar,NULL,covariatesIn,NULL,as.factor(data_full$response),"response",axes=pca_axis[[x]]))
+
+# n<-round(length(pca_plots)/2);
+n<-length(pca_plots);
+
+graphCols <-ceiling(n/floor(sqrt(n)));
+graphRows<-floor(sqrt(n))
+
+pca_plots.all<-ggpubr::ggarrange(plotlist = pca_plots, nrow = graphRows,ncol = graphCols, common.legend = TRUE, legend = "bottom")
+
+annotate_figure(pca_plots.all,
+               top = text_grob("FULL DATA - no preprocessing", color = "black", face = "bold", size = 14))
+```
+
+# Model building  {.tabset .tabset-fade .tabset-pills}
+
+We are subsetting to all the data that have ALL the information, i.e. removing missing data - imputation is left out at this point.
+
+$$
+Response[CRPR/PD] = TCR{\ }alpha{\ }richness + BCR{\ }igh{\ }richness + TIS{\_}score+ Tumor{\ }purity + CD8{\ }T-cells{\ }infiltration + CD4{\ }T-cells{\ }infiltration + B{\ }-cells{\ }infiltration + PDL-1{\ }expression + logTMB + gender(?)
+$$
+From this full model, we want to perform feature selection (swith recursive feature elimination) to end up with the simplest solution. TCRalpha richness is necessary to be in the model.
+
+# SCHEME 3: MELANOMA specific
+
+```{r s3start,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+######################
+### Model variables ###
+######################
+modelTypeA <- "_TCRArichnessBCR.IGH.ds"
+modelTypeB <- "_MELANOMA"
+modelTypeC <- "mintcr4bcr10"
+
+immdata.TcrBcr.BLAD.MEL.ready <-immdata.TcrBcr.full.red.sub.ALL.filt %>% dplyr::filter(tissue %in% c("melanoma") ) %>% droplevels() # All melanoma & bladder, PD, CR, PR, complete data
+immdata.TcrBcr.ALL.ready <- immdata.TcrBcr.full.red.sub.filt %>% dplyr::filter(tissue %in% c("melanoma") ) %>% droplevels() # All tissues, PD, CR, PR, complete data
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+table(immdata.TcrBcr.ALL.ready$tissue)
+```
+
+SO FOR TRAINING THE DATA WE HAVE THIS:
+
+**TOTAL available data**
+
+***
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+nrow(immdata.TcrBcr.BLAD.MEL.ready)
+```
+
+**Table of available data per dataset**
+
+***
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+table(immdata.TcrBcr.BLAD.MEL.ready$dataset)
+```
+**Table of available data per tissue**
+
+***
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+table(immdata.TcrBcr.BLAD.MEL.ready$tissue)
+```
+
+## Multivariate Logistic Regression
+
+### Feature Selection
+
+#### Recursive feature elimination (RFE)
+
+Initial predictors in:
+
+1. TCR alpha Richness
+2. BCR-IGH Richness
+3. Tumor Purity( removing Stromal, Immune score and Estimate score since they are highly correlated, and I think that might confound the results)
+4. CD4 T cell infiltration (cibersort)
+5. CD8 T cell infiltration (cibersort) - removed CD8A, CD8B gene expression, >0.8 correlation with CD8 T cell infiltration
+6. B cells
+7. logTMB
+8. PD-L1
+9. GEP signature score
+10. gender (??)
+
+Collecting the results from all the different models, and optimization results, in order to select model and optimal parameters that will be applied to the rest of the solo models.
+
+
+We tried the following models along with RFE:
+
+1. Random Forest
+2. Linear Logistic Regression
+3. Naive Bayes
+4. Support Vector Machine Radial
+5. Support vector Machine Linear
+6. K-Nearest Neighbours
+
+Repeated K-fold CV was applied for the RFE and training of the machine learning model with K-fold CV.
+Centering and scaling preprocessing was applied in each of the resamples, in order to avoid data leakage in the tuning of the parameters and selection of the final model.
+
+```{r s3rfeOpt,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+#######################
+## RUN SINGLE MODELS ##
+#######################
+rfe_rf <- loadRData(paste0(modelsPath,"optimizationParamsModels","_RFE","_RF",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+# rfe_rf[which(rfe_rf$ROC==max(rfe_rf$ROC)),]
+# hist(rfe_rf$ROC)
+# rfe_rf[order(rfe_rf$ROC, decreasing = TRUE),] %>% head()
+rfe_rf.opt <-rfe_rf[which(rfe_rf$ROC==max(rfe_rf$ROC)),]
+# #
+# #
+rfe_lr <- loadRData(paste0(modelsPath,"optimizationParamsModels","_RFE","_LR",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+# rfe_lr[which(rfe_lr$ROC==max(rfe_lr$ROC)),]
+# hist(rfe_lr$ROC)
+# rfe_lr[order(rfe_lr$ROC, decreasing = TRUE),] %>% head()
+rfe_lr.opt <-rfe_lr[which(rfe_lr$ROC==max(rfe_lr$ROC)),]
+# #
+# #
+# #
+rfe_nb <- loadRData(paste0(modelsPath,"optimizationParamsModels","_RFE","_NB",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+# rfe_nb[which(rfe_nb$ROC==max(rfe_nb$ROC)),]
+# hist(rfe_nb$ROC)
+# rfe_nb[order(rfe_nb$ROC, decreasing = TRUE),] %>% head()
+rfe_nb.opt <-rfe_nb[which(rfe_nb$ROC==max(rfe_nb$ROC)),]
+
+# rfe_nb <- loadRData(paste0(projectRDataPathC,"optimizationParamsModels","_RFE","_NB",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+# rfe_nb[which(rfe_nb$ROC==max(rfe_nb$ROC)),]
+# hist(rfe_nb$ROC)
+# rfe_nb[order(rfe_nb$ROC, decreasing = TRUE),] %>% head()
+# rfe_nb.opt <-rfe_nb[which(rfe_nb$ROC==max(rfe_nb$ROC)),]
+# #
+# #
+rfe_svmr <- loadRData(paste0(modelsPath,"optimizationParamsModels","_RFE","_SVMr",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+# rfe_svmr[which(rfe_svmr$ROC==max(rfe_svmr$ROC)),]
+# hist(rfe_svmr$ROC)
+# rfe_svmr[order(rfe_svmr$ROC, decreasing = TRUE),] %>% head()
+rfe_svmr.opt <-rfe_svmr[which(rfe_svmr$ROC==max(rfe_svmr$ROC)),]
+# #
+rfe_svml <- loadRData(paste0(modelsPath,"optimizationParamsModels","_RFE","_SVMl",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+# rfe_svml[which(rfe_svml$ROC==max(rfe_svml$ROC)),]
+# hist(rfe_svml$ROC)
+# rfe_svml[order(rfe_svml$ROC, decreasing = TRUE),] %>% head()
+rfe_svml.opt <-rfe_svml[which(rfe_svml$ROC==max(rfe_svml$ROC)),]
+# #
+rfe_knn <- loadRData(paste0(modelsPath,"optimizationParamsModels","_RFE","_KNN",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+# rfe_knn[which(rfe_knn$ROC==max(rfe_knn$ROC)),]
+# hist(rfe_knn$ROC)
+# rfe_knn[order(rfe_knn$ROC, decreasing = TRUE),] %>% head()
+rfe_knn.opt <-rfe_knn[which(rfe_knn$ROC==max(rfe_knn$ROC)),]
+# #
+# #
+rfe.models.opt <- list(`Random Forest` = rfe_rf.opt,
+                       `Linear Logistic Regression` = rfe_lr.opt,
+                       `Naive Bayes` = rfe_nb.opt,
+                       `SVM Radial` = rfe_svmr.opt,
+                       `SVM Linear` = rfe_svml.opt,
+                       `K-Nearest Neighbours` = rfe_knn.opt)
+
+rfe.models.opt.DF <-bind_rows(rfe.models.opt, .id = "model")
+
+# Find optimal parameters and model
+# rfe.models.opt.DF2 <- rbind(rfe.models.opt.DF,rfe.models.opt.DF)
+rfe.models.opt.final <-rfe.models.opt.DF %>% dplyr::filter(ROC == max(ROC)) %>% slice(1)
+# rfe.models.opt.DF.m <- rfe.models.opt.DF %>% dplyr::select(model, ROC, PPV, NPV, split, kfolds, subsampling) %>% melt(id.vars = c("model","split", "kfolds", "subsampling"))
+# 
+# rfe.models.opt.DF.m$params <- paste0("Split = ",rfe.models.opt.DF.m$split, ", K-fold = ",rfe.models.opt.DF.m$kfolds, " , Sampling = ",rfe.models.opt.DF.m$subsampling)
+#
+# # ggplot(rfe.models.opt.DF %>% dplyr::select(model, ROC, PPV, NPV) %>% melt(), aes(fill=variable, y=value, x=model)) +
+# #     geom_bar(position="dodge", stat="identity")
+# rfe.models.opt.DF.m$model <- factor(rfe.models.opt.DF.m$model,levels = unique(rfe.models.opt.DF.m$model))
+optimal.model <- rfe.models.opt.final$model
+print(paste0(">>>>Model giving best results is: ", optimal.model,"<<<<<<<"))
+
+kFold.opt = rfe.models.opt.final$kfolds
+Sampling.opt =rfe.models.opt.final$subsampling
+split.opt =rfe.models.opt.final$split
+optList = list(kfold = kFold.opt,
+               sampling=Sampling.opt,
+               split = split.opt)
+
+rfe.models.opt.DF.m <- rfe.models.opt.DF %>% dplyr::select(model, ROC, PPV, NPV, split, kfolds, subsampling) %>% melt(id.vars = c("model","split", "kfolds", "subsampling"))
+
+rfe.models.opt.DF.m$params <- paste0("Split = ",rfe.models.opt.DF.m$split, ", K-fold = ",rfe.models.opt.DF.m$kfolds, " , Sampling = ",rfe.models.opt.DF.m$subsampling)
+
+# ggplot(rfe.models.opt.DF %>% dplyr::select(model, ROC, PPV, NPV) %>% melt(), aes(fill=variable, y=value, x=model)) + 
+#     geom_bar(position="dodge", stat="identity")
+rfe.models.opt.DF.m$model <- factor(rfe.models.opt.DF.m$model,levels = unique(rfe.models.opt.DF.m$model))
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+
+simpleBarchart(rfe.models.opt.DF.m, "model", "value", "variable", "variable", "Models", "Model Evaluation metric value",123,FALSE,legendTitle="Evaluation Metric",ratioLine = TRUE,type="reps")
+
+rfeModelsEval.Bar <- simpleBarchart(rfe.models.opt.DF.m, "model", "value", "variable", "variable", "Models", "Model Evaluation metric value",123,FALSE,legendTitle="Evaluation Metric",ratioLine = TRUE,type="reps")
+
+```
+
+Best performing model in terms of ROC, PPV and NPV values.
+
+We will extract this model and it's optimal parameters, optimal split, sampling and k-folds for the CV, to use for all the rest (and previous solo) models.
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+
+save(optList,
+     file=paste0(modelsPath,"paramOptim/","model_FINALoptParams",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+```
+
+**OPTIMAL PARAMETERS FOR RUNNING ALL MODELS**
+
+* K-fold: `r kFold.opt`
+* Sampling: `r Sampling.opt`
+* Train split: `r split.opt`
+
+
+
+Load models with optimal parameters
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+model_rf <- loadRData(paste0(modelsPath,"paramOptim/","rf_optParams",modelTypeA,modelTypeB,modelTypeC,Rdata.suffix))
+model_lr <- loadRData(paste0(modelsPath,"paramOptim/","lr_optParams",modelTypeA,modelTypeB,modelTypeC,Rdata.suffix))
+model_nb <- loadRData(paste0(modelsPath,"paramOptim/","nb_optParams",modelTypeA,modelTypeB,modelTypeC,Rdata.suffix))
+model_svmr <- loadRData(paste0(modelsPath,"paramOptim/","svmr_optParams",modelTypeA,modelTypeB,modelTypeC,Rdata.suffix))
+model_svml <- loadRData(paste0(modelsPath,"paramOptim/","svml_optParams",modelTypeA,modelTypeB,modelTypeC,Rdata.suffix))
+model_knn <- loadRData(paste0(modelsPath,"paramOptim/","knn_optParams",modelTypeA,modelTypeB,modelTypeC,Rdata.suffix))
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+train.rfe <- list(rfModel = model_rf$model,
+                  lrModel = model_lr$model,
+                  nbModel = model_nb$model,
+                  svmRadModel = model_svmr$model,
+                  svmLinModel = model_svml$model,
+                  knnModel = model_knn$model
+                  )
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+ClassLevels = c("CRPR","PD")
+sigs <- c("Random Forest", "Linear Regression","Naive Bayes","SVM Radial","SVM Linear","K-Nearest Neighbors")
+sigs_axisNames<- c("Random Forest", "Linear Regression","Naive Bayes","SVM Radial","SVM Linear","K-Nearest Neighbors")
+sigs_titleNames<- c("Random Forest", "Linear Regression","Naive Bayes","SVM Radial","SVM Linear","K-Nearest Neighbors")
+names(train.rfe) <- c(paste0('RF: R ~ ',paste(predictors(train.rfe[[1]]), collapse = " + ")),
+                     paste0('LR: R ~ ',paste(predictors(train.rfe[[2]]), collapse = " + ")),
+                     paste0('NB: R ~ ',paste(predictors(train.rfe[[3]]), collapse = " + ")),
+                     paste0('SVM-Radial: R ~ ',paste(predictors(train.rfe[[4]]), collapse = " + ")),
+                     paste0('SVM-Linear: R ~ ',paste(predictors(train.rfe[[5]]), collapse = " + ")),
+                     paste0('KNN: R ~ ',paste(predictors(train.rfe[[6]]), collapse = " + "))
+                     )
+
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,fig.width=6, fig.height=6}
+
+sapply(1:length(train.rfe), function(x) paste(predictors(train.rfe[[x]]), collapse = " + "))
+```
+
+#### Variable Importance {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+
+
+vp <-sapply(1:length(train.rfe), function(x) varimpPlot(train.rfe[[x]],sigs[x]))
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=FALSE,results='asis', fig.width=10, fig.height=12}
+### Repeated CV ROC
+
+# only if repeats saved
+repCVrocp <-sapply(1:length(train.rfe), function(x) repCVrocPlot(train.rfe[[x]],sigs[x]))
+
+```
+
+
+## RECURSIVE FEATURE ELIMINATION MODELS
+
+Extract and save test data.
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+
+######################
+
+testDF.nb <-checkLogRegModelTEST(DF = immdata.TcrBcr.ALL.ready,models.all = model_nb,model.name = "logTMB", 
+                     obsColumn = "run_accession",
+                     filtered = TRUE,scaled=TRUE,rfeE=TRUE)
+
+# Compare with the previous test data, to be sure they include same samples
+testDF <- list(testDF.nb)
+# setdiff(testDF[[1]]$run_accession,testDF.nb$run_accession)
+# setdiff(testDF.nb$run_accession,testDF[[1]]$run_accession)
+save(testDF,file=paste0(testDataOut,"testDF",modelTypeA,modelTypeB, modelTypeC,".RData"))
+
+data.testX <- as.data.frame(testDF[[1]][,which(colnames(testDF[[1]]) %in% covariatesIn)])
+
+test.ALL <- rbind(testDF[[1]],immdata.TcrBcr.full.red.sub.ALL.filt %>% dplyr::filter(dataset %in% c("Liu") ) %>% droplevels())
+data.testX.ALL <- as.data.frame(test.ALL[,which(colnames(test.ALL) %in% covariatesIn)])
+```
+
+### Evaluation of performance on Test data {.tabset .tabset-fade .tabset-pills}
+
+
+
+
+## LOGISTIC REGRESSION: UNI/BIVARIATE MODELS
+
+### Training models
+
+Loading optimal parameters for running all the models (found by selecting best RFE model)
+```{r s3loadFinalopt,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+
+optList <-loadRData(paste0(modelsPath,"paramOptim/","model_FINALoptParams",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+```
+
+```{r s3nonRFEmodels,warning=F, message=F,echo=FALSE, eval=TRUE, fig.width=10, fig.height=12}
+if(isTRUE(run_clean)){
+  ## SOLO MODELS
+  res.tcr.rich <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste("TCRArichness.ds",collapse = " + "),controlDum=FALSE,model.name = "TCR.richness",mainFeats = c("TCRArichness.ds"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  
+  res.logTMB <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste("logTMB",collapse = " + "),controlDum=FALSE,model.name = "logTMB",mainFeats = c("logTMB"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.pdL1 <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste("PDL1",collapse = " + "),controlDum=FALSE,model.name = "PDL1",mainFeats = c("PDL1"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  res.bcr.rich <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste("BCR.IGHrichness.ds",collapse = " + "),controlDum=FALSE,model.name = "BCR.richness",mainFeats = c("BCR.IGHrichness.ds"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  res.tis <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste("TIS_sigscore",collapse = " + "),controlDum=FALSE,model.name = "TIS",mainFeats = c("TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  # BIVARIATE MODELS
+  res.tcrbcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds", "BCR.IGHrichness.ds"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_Bcr",mainFeats = c("TCRArichness.ds", "BCR.IGHrichness.ds"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  res.tcrTMB <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","logTMB"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_logTMB",mainFeats = c("TCRArichness.ds","logTMB"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.tcrpdl1 <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds", "PDL1"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_pdl1",mainFeats = c("TCRArichness.ds","PDL1"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+   res.tcrtis <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds", "TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_tis",mainFeats = c("TCRArichness.ds","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  ## BCR
+  res.bcrTMB <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("BCR.IGHrichness.ds","logTMB"),collapse = " + "),controlDum=FALSE,model.name = "Bcr_logTMB",mainFeats = c("BCR.IGHrichness.ds","logTMB"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE) 
+   
+   res.bcrpdl1 <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("BCR.IGHrichness.ds","PDL1"),collapse = " + "),controlDum=FALSE,model.name = "Bcr_pdl1",mainFeats = c("BCR.IGHrichness.ds","PDL1"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+   
+   res.bcrtis <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("BCR.IGHrichness.ds","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "Bcr_tis",mainFeats = c("BCR.IGHrichness.ds","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+   # TMB
+   res.TMBpdl1 <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("logTMB", "PDL1"),collapse = " + "),controlDum=FALSE,model.name = "logTMB_pdl1",mainFeats = c("logTMB","PDL1"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  res.TMBtis <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("logTMB", "TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "logTMB_tis",mainFeats = c("logTMB","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  # PDL1
+  res.pdl1tis <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("PDL1","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "pdl1_tis",mainFeats = c("PDL1","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  # TRIVARIATE MODELS
+  res.tcrTMBbcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_logTMB_Bcr",mainFeats = c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.tcrpdl1bcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_pdl1_Bcr",mainFeats = c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  res.tcrtisbcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds", "BCR.IGHrichness.ds","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_tis_Bcr",mainFeats = c("TCRArichness.ds", "BCR.IGHrichness.ds","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.tcrTMBpdl1 <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","logTMB", "PDL1"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_logTMB_pdl1",mainFeats = c("TCRArichness.ds","logTMB", "PDL1"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.tcrTMBtis <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","logTMB", "TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_logTMB_tis",mainFeats = c("TCRArichness.ds","logTMB", "TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.tcrtispdl1 <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds", "PDL1","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "Tcr_tis_pdl1",mainFeats = c("TCRArichness.ds", "PDL1","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.TMBpdl1bcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("BCR.IGHrichness.ds","logTMB","PDL1"),collapse = " + "),controlDum=FALSE,model.name = "TMB_pdl1_Bcr",mainFeats = c("BCR.IGHrichness.ds","logTMB","PDL1"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.TMBtisbcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("BCR.IGHrichness.ds","logTMB","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "TMB_tis_Bcr",mainFeats = c("BCR.IGHrichness.ds","logTMB","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  res.tispdl1bcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("BCR.IGHrichness.ds","PDL1","TIS_sigscore" ),collapse = " + "),controlDum=FALSE,model.name = "tis_pdl1_Bcr",mainFeats = c("BCR.IGHrichness.ds","PDL1","TIS_sigscore" ),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  res.tispdl1TMB <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("logTMB","PDL1","TIS_sigscore" ),collapse = " + "),controlDum=FALSE,model.name = "tis_pdl1_TMB",mainFeats = c("logTMB","PDL1","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  # COMBO OF FOUR POTENTIAL
+  res.TMBpdl1tcrbcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1"),collapse = " + "),controlDum=FALSE,model.name = "TMB_pdl1_Tcr_Bcr",mainFeats = c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+   res.TMBtistcrbcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "TMB_tis_Tcr_Bcr",mainFeats = c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+   
+   res.pdl1tistcrbcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "pdl1_tis_Tcr_Bcr",mainFeats = c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+   
+    res.pdl1tistcrTMB <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","logTMB","PDL1","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "pdl1_tis_Tcr_TMB",mainFeats = c("TCRArichness.ds","logTMB","PDL1","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+    
+    
+  res.pdl1tisTMBbcr <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("BCR.IGHrichness.ds", "logTMB","PDL1","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "pdl1_tis_TMB_Bcr",mainFeats = c("BCR.IGHrichness.ds", "logTMB","PDL1","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  # ALL FIVE
+  res.tcrbcrTMBpdl1tis <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+           seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+           dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+           REPEATS = 30,KFOLDS = optList$kfold,
+           metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+           paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1","TIS_sigscore"),collapse = " + "),controlDum=FALSE,model.name = "tcr_Bcr_TMB_pdl1_tis",mainFeats = c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1","TIS_sigscore"),
+           removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+           stratify=FALSE,fullResults=TRUE,
+           positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+           CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+  
+  
+  train.modelsSolo <- list(tcr = res.tcr.rich$model$TCR.richness,
+                           bcr = res.bcr.rich$model$BCR.richness,
+                           logTMB = res.logTMB$model$logTMB,
+                           pdl1 = res.pdL1$model$PDL1,
+                           tis=res.tis$model$TIS
+                           )
+  
+  train.modelsBivariate <- list(
+                           tcrbcr=res.tcrbcr$model$Tcr_Bcr,
+                           tcrTMB = res.tcrTMB$model$Tcr_logTMB,
+                           tcrpdl1 = res.tcrpdl1$model$Tcr_pdl1,
+                           tcrTIS = res.tcrtis$model$Tcr_tis,
+                           bcrTMB=res.bcrTMB$model$Bcr_logTMB,
+                           bcrpdl1=res.bcrpdl1$model$Bcr_pdl1,
+                           bcrTIs=res.bcrtis$model$Bcr_tis,
+                           TMBpdl1 = res.TMBpdl1$model$logTMB_pdl1,
+                           TMBtis = res.TMBtis$model$logTMB_tis,
+                           pl1tis = res.pdl1tis$model$pdl1_tis
+                           )
+  
+  train.modelsTrivariate <- list(tcrTMBbcr= res.tcrTMBbcr$model$Tcr_logTMB_Bcr,
+                                 tcrpdl1bcr= res.tcrpdl1bcr$model$Tcr_pdl1_Bcr,
+                                 tcrtisbcr = res.tcrtisbcr$model$Tcr_tis_Bcr,
+                                tcrTMBpdl1 = res.tcrTMBpdl1$model$Tcr_logTMB_pdl1,
+                                 tcrTMBtis = res.tcrTMBtis$model$Tcr_logTMB_tis,
+                                tcrtispdl1 = res.tcrtispdl1$model$Tcr_tis_pdl1,
+                                 TMBpdl1bcr= res.TMBpdl1bcr$model$TMB_pdl1_Bcr,
+                                TMBtisbcr = res.TMBtisbcr$model$TMB_tis_Bcr,
+                                tispdl1bcr = res.tispdl1bcr$model$tis_pdl1_Bcr,
+                                tispdl1TMB = res.tispdl1TMB$model$tis_pdl1_TMB
+                                )
+  
+  train.modelsQuadravariate <- list(TMBpdl1tcrbcr = res.TMBpdl1tcrbcr$model$TMB_pdl1_Tcr_Bcr,
+                                    TMBtistcrbcr = res.TMBtistcrbcr$model$TMB_tis_Tcr_Bcr,
+                                    pdl1tistcrbcr = res.pdl1tistcrbcr$model$pdl1_tis_Tcr_Bcr,
+                                    pdl1tistcrTMB = res.pdl1tistcrTMB$model$pdl1_tis_Tcr_TMB,
+                                    pdl1tisTMBbcr = res.pdl1tisTMBbcr$model$pdl1_tis_TMB_Bcr
+                                )
+  
+  train.modelsALL <- list(tcrbcrTMBpdl1tis = res.tcrbcrTMBpdl1tis$model$tcr_Bcr_TMB_pdl1_tis)
+  
+  # SAVE
+  save(train.modelsSolo,file=paste0(modelsInterm,"models_solo",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+  save(train.modelsBivariate,file=paste0(modelsInterm,"models_bi",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+  save(train.modelsTrivariate,file=paste0(modelsInterm,"models_tri",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+  save(train.modelsQuadravariate,file=paste0(modelsInterm,"models_quad",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+  save(train.modelsALL,file=paste0(modelsInterm,"models_all",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+}
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+train.modelsSolo <- loadRData(paste0(modelsInterm,"models_solo",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))  
+
+res.logTMB <-trainRUN(immdata.TcrBcr.BLAD.MEL.ready,split = optList$split,ClassLevels = c("CRPR","PD"),PositiveClass = "CRPR",LevelIndex = 1,
+         seed.partition = 3456,seed.model = 5627,setCVseeds=NULL,
+         dummy=FALSE,dummyVars=c("tissue"),categVars=c("tissue","dataset"),obsColumn = "run_accession",responseVar = "response",
+         REPEATS = 30,KFOLDS = optList$kfold,
+         metricOpt = "F",subsampMethod=optList$sampling,inoutSub="in",
+         paste("logTMB",collapse = " + "),controlDum=FALSE,model.name = "logTMB",mainFeats = c("logTMB"),
+         removeOutliers=FALSE,quantileClass1=.95,quantileClass2=.95,selectOutlierMethod= "meanDist",
+         stratify=FALSE,fullResults=TRUE,
+         positiveCoefs=FALSE, filter=TRUE,filterVar="dataset",filterSelected=c("Gide","Rod","Hugo","Riaz","Liu"),
+         CorrRemove=FALSE,corrThres=NULL,selectedScale=TRUE)
+```
+
+In the initial simple splitting of data based on response I noticed an unbalanced splitting of tissues, so a lot moe bladder data where included in the train data, and eventually a lot more melanoma data where included in the test data. I will try to balanced this.
+
+Resampling results from training solo predictor models on train data:
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=12, fig.height=6}
+bwplot(resamples(train.modelsSolo))
+```
+
+Automatically test the models on test data, automatic calculation of leftover test data, selection of test data etc. .
+
+
+### Test data for all models
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE, fig.width=10, fig.height=12}
+
+testDF.tcra <-checkLogRegModelTEST(DF = immdata.TcrBcr.ALL.ready,models.all = res.logTMB,model.name = "logTMB", 
+                     obsColumn = "run_accession",
+                     filtered = TRUE,scaled=TRUE)
+testDF.logTMB <-checkLogRegModelTEST(DF = immdata.TcrBcr.ALL.ready,models.all = res.logTMB,model.name = "logTMB", 
+                     obsColumn = "run_accession",
+                     filtered = TRUE,scaled=TRUE)
+testDF.pdl1 <-checkLogRegModelTEST(DF = immdata.TcrBcr.ALL.ready,models.all = res.logTMB,model.name = "logTMB", 
+                     obsColumn = "run_accession",
+                     filtered = TRUE,scaled=TRUE)
+
+testDF.bcr <-checkLogRegModelTEST(DF = immdata.TcrBcr.ALL.ready,models.all = res.logTMB,model.name = "logTMB", 
+                     obsColumn = "run_accession",
+                     filtered = TRUE,scaled=TRUE)
+
+testDF.tis <-checkLogRegModelTEST(DF = immdata.TcrBcr.ALL.ready,models.all = res.logTMB,model.name = "logTMB", 
+                     obsColumn = "run_accession",
+                     filtered = TRUE,scaled=TRUE)
+
+testDF <- list(testDF.tcra,
+               testDF.logTMB,
+               testDF.pdl1,
+               testDF.bcr,
+               testDF.tis)
+
+```
+
+## RFE-`r optimal.model` vs Univariate & Bi-/Tri-variate LOGREG MODELS
+
+Moving forward with the RFE-`r optimal.model`, since it seems to be the best performing model.
+
+```{r s3rfeVSlogreg,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+## SELECTING MODELS
+# Loading models of manual multivariate regression
+train.modelsBivariate <- loadRData(paste0(modelsInterm,"models_bi",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+train.modelsTrivariate <- loadRData(paste0(modelsInterm,"models_tri",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+train.modelsQuadravariate <- loadRData(paste0(modelsInterm,"models_quad",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+train.modelsALL <- loadRData(paste0(modelsInterm,"models_all",modelTypeA,modelTypeB, modelTypeC,Rdata.suffix))
+
+## Selecting NB model, solog logreg models and bivariate logreg models
+rfeMods <- names(train.rfe)
+rfeMods.n <-sapply(rfeMods, function(x) strsplit(x,":")[[1]][1])
+names(rfeMods.n) <- NULL
+rfeMods.n <- str_replace(rfeMods.n,"-"," ")
+idxBestRFE <-which(rfeMods.n==optimal.model)
+
+rfeBestfeats <- train.rfe[[idxBestRFE]]$optVariables
+rfeBestfeats <- ifelse(rfeBestfeats=="BCR.IGHrichness.ds","BCR richness",
+                       ifelse(rfeBestfeats=="TIS_sigscore","TIS",
+                              ifelse(rfeBestfeats=="Bcells","B cells",
+                                     ifelse(rfeBestfeats=="CD8cells","CD8 cells",
+                                            ifelse(rfeBestfeats=="CD4cells","CD4 cells",
+                                                   ifelse(rfeBestfeats=="TumorPurity","Tumor Purity",
+                                                          ifelse(rfeBestfeats=="TCRArichness.ds","TCR richness",rfeBestfeats)))))))
+models.final <- c(train.modelsSolo,
+                  train.modelsBivariate,
+                  train.modelsTrivariate,
+                  train.modelsQuadravariate,
+                  train.modelsALL,
+                  list(nbModel =train.rfe[[idxBestRFE]]))
+
+names(models.final) <- c('M01: R ~ TCRa richness','M02: R ~ BCRigh richness', 
+                      "M03: R ~ logTMB",'M04: R ~ PD-L1','M05: R ~ TIS GEP',
+                      #BIVAR
+                      "M06 (LR): R ~ TCR richness + BCR richness",
+                      "M07 (LR): R ~ TCR richness + logTMB", 
+                      "M08 (LR): R ~ TCR richness + PD-L1", 
+                      "M09 (LR): R ~ TCR richness + TIS GEP",
+                      "M10 (LR): R ~ BCR richness + logTMB",
+                      "M11 (LR): R ~ BCR richness + PD-L1",
+                      "M12 (LR): R ~ BCR richness + TIS GEP",
+                      "M13 (LR): R ~ logTMB + PD-L1",
+                      "M14 (LR): R ~ logTMB + TIS GEP",
+                      "M15 (LR): R ~ PD-L1 + TIS GEP",
+                      #TRIVAR
+                      "M16 (LR): R ~ TCR richness + BCR richness + logTMB",
+                      "M17 (LR): R ~ TCR richness + BCR richness + PD-L1",
+                      "M18 (LR): R ~ TCR richness + BCR richness + TIS GEP",
+                      "M19 (LR): R ~ TCR richness + logTMB + PD-L1", 
+                      "M20 (LR): R ~ TCR richness + logTMB + TIS GEP",
+                      "M21 (LR): R ~ TCR richness + PD-L1 + TIS GEP",   
+                      "M22 (LR): R ~ BCR richness + logTMB + PD-L1",
+                      "M23 (LR): R ~ BCR richness + logTMB + TIS GEP",
+                      "M24 (LR): R ~ BCR richness + PD-L1 + TIS GEP",
+                      "M25 (LR): R ~ logTMB + PD-L1 + TIS GEP", 
+                      #QUADRAVAR
+                      "M26 (LR): R ~ TCR richness + BCR richness + logTMB + PD-L1",
+                      "M27 (LR): R ~ TCR richness + BCR richness + logTMB + TIS GEP",
+                      "M28 (LR): R ~ TCR richness + BCR richness + PD-L1 + TIS GEP",
+                      "M29 (LR): R ~ TCR richness + logTMB + PD-L1 + TIS GEP",
+                      "M30 (LR): R ~  BCR richness + logTMB + PD-L1 + TIS GEP",
+                      "M31 (LR): R ~ TCR richness + BCR richness + logTMB + PD-L1 + TIS GEP",
+                         paste0("M32 (RFE-",optimal.model,"): R ~ ",paste(rfeBestfeats,collapse = " + ")))
+sigs <- sigs <- c("TCRArichness.ds", "logTMB","PDL1","BCR.IGHrichness.ds","TIS_sigscore",
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds"),collapse = " + "),
+          paste(c("TCRArichness.ds", "logTMB"),collapse = " + "),
+          paste(c("TCRArichness.ds", "PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds", "TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "logTMB"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "PDL1"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "TIS_sigscore"),collapse = " + "),
+          paste(c("logTMB", "PDL1"),collapse = " + "),
+          paste(c("logTMB", "TIS_sigscore"),collapse = " + "),
+          paste(c("PDL1","TIS_sigscore"),collapse = " + "),
+          # TRI
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","logTMB","PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","PDL1","TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds","logTMB","PDL1"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds","PDL1","TIS_sigscore"),collapse = " + "),
+          paste(c("logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          #QUADRA
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","PDL1","TIS_sigscore"),collapse = " + "),
+          paste(c("TCRArichness.ds","logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          paste(c("BCR.IGHrichness.ds", "logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          #ALL
+          paste(c("TCRArichness.ds","BCR.IGHrichness.ds","logTMB","PDL1","TIS_sigscore"),collapse = " + "),
+          #RFE
+          paste(rfeBestfeats,collapse = " + "))
+
+
+sigs_axisNames<- c(rep("Univariate Logistic Regression",length(train.modelsSolo)),
+                   rep("Bivariate Logistic Regression",length(train.modelsBivariate)),
+                   rep("Trivariate Logistic Regression",length(train.modelsTrivariate)),
+                   rep("Quadravariate Logistic Regression",length(train.modelsQuadravariate)),
+                   rep("5-variate Logistic Regression",length(train.modelsSolo)),
+                   "RFE with Naive Bayes")
+sigs_axisNames<-names(models.final)
+sigs_titleNames<- names(models.final)
+
+
+ClassLevels = c("CRPR","PD")
+
+
+indexUniRFE <-c(1:5,32)
+indexUni<- c(1:5)
+indexRFE <- 6
+indexBiv <-c(6:15)
+indexTriv<-c(16:25)
+indexQuad5<-c(26:31)
+## SAVE ALL models
+save(models.final, file = paste0(modelsInterm,"models.final",modelTypeA,modelTypeB, modelTypeC,".RData"))
+```
+
+
+### Evaluation of performance on Test data {.tabset .tabset-fade .tabset-pills}
+
+#### Compare ROC-AUC {.tabset .tabset-fade .tabset-pills}
+
+
+```{r s3rfeComp,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=20, fig.height=20}
+if(isTRUE(run_clean)){
+  panderOptions('knitr.auto.asis', FALSE)
+  # Calculate all pairwise combinations of TuTack signatures
+  modelNames.final<- names(models.final)
+  
+  model.pairwiseCombos.final <-split(t(combn(modelNames.final,2)), f = 1:ncol(combn(modelNames.final,2)))
+  # Making a vector for Mixed Mode or RFE to be able to process
+  # n = length(model.pairwiseCombos.final)
+  n=length(modelNames.final)
+  modeVec <- c()
+  for (i in 2:n){
+    # i=8
+    t <-c(rep(FALSE,n-i),TRUE)
+    modeVec <- c(modeVec,t)
+  }
+  
+  
+  trVector <- list()
+  for (i in 2:n){
+    # i=2
+    t <-c(as.list(rep(FALSE,n-i)),c(1))
+    trVector <- c(trVector,t)
+  }
+  
+  
+  rfeVector <- list()
+  for (i in 2:n){
+    t <-c(as.list(rep(FALSE,n-i)),c(2))
+    rfeVector <- c(rfeVector,t)
+  }
+ 
+  r <-lapply(1:length(model.pairwiseCombos.final), function(x) compareTwoRocCurves(models.final[which(names(models.final) %in% model.pairwiseCombos.final[[x]])],
+                                                                         testDF[[1]], "response", ClassLevels,1,model.pairwiseCombos.final[[x]], 
+                                                                         testX = data.testX, testY=testDF[[1]]$response,thres = NULL,rfeE=FALSE,
+                                                                         mixedMode = modeVec[x],
+                                    trainModelsVec = trVector[[x]],
+                                    rfeModelsVec = rfeVector[[x]], saveD = TRUE))
+  
+  allComparisons <-ldply(r)
+  allComparisons$modelComp <-unlist(lapply(model.pairwiseCombos.final, function(x) paste(x, collapse = "|")))
+  # library(splitstackshape)
+  allComparisons <-cSplit(allComparisons, "modelComp", "|")
+  
+  # strsplit(as.character(allComparisons$modelComp), ', ', fixed=TRUE)
+  # Create empty dataframe
+  mat = matrix(ncol = n, nrow = n)
+    
+  # converting the matrix to data 
+  # frame
+  df=data.frame(mat)
+  rownames(df) <- modelNames.final
+  colnames(df) <-modelNames.final
+  df <- as.matrix(df)
+  
+  
+  for(i in 1:nrow(allComparisons)){
+    print(i)
+    dfRow <-allComparisons[i,]
+    r1 <-dfRow$modelComp_1
+    c1 <- dfRow$modelComp_2
+    pv <- dfRow$`P-value`
+    df[r1,c1] <- pv
+  }
+  
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+      cormat[lower.tri(cormat)]<- NA
+      return(cormat)
+  }
+  
+  upper_tri <- get_upper_tri(df)
+  upper_tri
+  melted_mat <- melt(upper_tri, na.rm = TRUE)
+  # corHeatmap2(melted_mat)
+  rocsCompare.all <-corHeatmap2(melted_mat)
+  # save(rocsCompare.all, file = paste0(rocCompareOut,"modelsCompRFE",modelTypeA,modelTypeB, modelTypeC,".RData"))
+  save(melted_mat, file = paste0(rocCompareOut,"modelsCompRFE.DF",modelTypeA,modelTypeB, modelTypeC,".RData"))
+
+}
+
+```
+
+
+
+
+
+# Session
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"E_06_aPD1_RFE_multivariate_postProcessing_Scheme3.txt"))
+
+sessionInfo()
+
+```

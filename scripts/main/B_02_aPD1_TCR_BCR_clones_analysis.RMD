@@ -1,0 +1,1631 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center> TCR , BCR quantification analysis</center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 2 February 2021. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 4
+    number_sections: true
+    #df_print: paged
+
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1', progress=FALSE)#
+unlink("scripts/main/B_02_aPD1_TCR_BCR_clones_analysis_cache", recursive = TRUE)
+## IMPORTANT CHECK BELOW ROOT DIR AND CHANGE IT
+```
+
+
+```{r,warning=F, message=F}
+## Clear R-workspace
+rm(list=ls(all=TRUE))
+
+## Close all graphic devices
+graphics.off()
+#####################
+### Load packages ###
+#####################
+library(pacman)
+
+pacman::p_load(extrafont,DT,stringr,dplyr,plyr,tibble,tidyverse,strex,data.table,entropy,vegan,ggstatsplot,hrbrthemes,ggstatsplot, immunarch,reshape, pander, data.table,ggrepel,scales, binfotron,DivE)
+
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+rootDir <-'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1/'
+
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsMainPath<- paste0(scriptsPath, "main/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+antiPDL1publicInputData <- paste0(projectDataPath,"antiPD(L)1_public/")
+otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+# Output
+projectOutDataPath <- paste0("output/data_files/")
+# tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+antiPDL1publicIntermediateData <- paste0(projectOutDataPath,"antiPD(L)1_public/")
+# MixCR output paths
+pathToMixcr <-"rna/processed/mixcr/"
+pathToMixcrFilter <- "rna/processed/mixcr_tcr/"
+pathToKallisto<- "rna/processed/kallisto/"
+pathToSampleTables <- "metadata/"
+
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+
+######################################
+## Create intermediate output paths ##
+######################################
+# if (!dir.exists(paste0(antiPDL1publicIntermediateData,"purity/"))) {dir.create(paste0(antiPDL1publicIntermediateData,"purity/"))}
+
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"aPD1_TCR_BCR_clones_analysis_functions.R"))
+
+##########################
+### FOLDER/FILES NAMES ###
+##########################
+# Create list with folders names for the different datasets.
+datasets <- c("Hugo","Riaz","Gide","Liu","Rod","Miao","Immotion150","Kim","Mari", "Powles","Braun")
+data.foldersList <- as.list(c("Hugo_MEL","Riaz_MEL","Gide_MEL", "Liu_MEL","Rodriguez_MEL","Miao_RCC","Immo150_RCC","Kim_GAS","Mari_BLA","Powles_BLA","Braun_RCC"))
+names(data.foldersList)<- c("Hugo","Riaz","Gide", "Liu","Rod", "Miao","Immotion150","Kim","Mari","Powles","Braun")
+
+############################
+## Project Data Filenames ##
+############################
+vst.batch.dataset.RData <- "RNASeqClin_VSTbatchDataset.RData"
+fpkm.uq.RData <- "RNASeqClin_FPKM.UQ.RData"
+
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+```
+
+# Load data{.tabset .tabset-fade .tabset-pills}
+
+Loading basic data objects and files for analysis.
+
+## Gene expression signatures
+
+TIS-GEP and TuTack
+
+```{r,warning=F, message=F, results=F, echo=F}
+## Immune Gene signatures
+gep_weights_df <- read.table(paste0(otherInputData,"Tcell_inflamed_gep_weights.txt"), header = TRUE, sep = "\t" )
+normalization_genes_df <- read.table(paste0(otherInputData,"normalization_genes.txt"), header = TRUE, sep = "\t" )
+## CHANGE NAME FOR "C14orf102"
+gep_weights_df[which(gep_weights_df$gene=="C14orf102"),]
+normalization_genes_df[which(normalization_genes_df$gene=="C14orf102"),] <- "NRDE2"
+
+# Load TuTack gene signature
+TuTACK.DF <-loadRData(paste0(otherInputData,"TuTack_signature_weights",Rdata.suffix))
+## LOAD TUTACK AND GEP DATA
+degs.only<-loadRData(paste0(otherInputData,"TuTack_degs.only.noIFNG",Rdata.suffix))
+# Load TuTack signatures
+MelMode <- ".LiuRod"
+TuTack_mel <- loadRData(paste0(otherInputData,"TuTack_MEL",Rdata.suffix))
+
+## BLADDER
+TuTack_blad <- loadRData(paste0(otherInputData,"TuTack_BLADDER",Rdata.suffix))
+
+## RCC
+TuTack_rcc <- loadRData(paste0(otherInputData,"TuTack_RCC",Rdata.suffix))
+
+model_mel <- loadRData(paste0(otherInputData,"TuTack_model_MEL",Rdata.suffix))
+
+# Extract scaling factor if scaling was applied
+trainScaleFactor_mel<-model_mel[[1]]$model$TuTack$preProcess
+## BLADDER
+model_blad <- loadRData(paste0(otherInputData,"TuTack_model_BLADDER",Rdata.suffix))
+# Extract scaling factor if scaling was applied
+trainScaleFactor_blad<-model_blad[[1]]$model$TuTack$preProcess
+
+## RCC
+model_rcc <- loadRData(paste0(otherInputData,"TuTack_model_RCC",Rdata.suffix))
+# Extract scaling factor if scaling was applied
+trainScaleFactor_rcc<-NULL
+```
+
+
+## Sample and CIBERSORT data
+
+```{r dataLoad,warning=F, message=F, results=F, echo=F,eval=TRUE}
+
+if (file.exists(paste0(antiPDL1publicIntermediateData,"samples.aPD1.f.tpm.dataset","_ALLresp", Rdata.suffix))){
+  samples_datasets <-loadRData(paste0(antiPDL1publicIntermediateData,"samples.aPD1.f.tpm.dataset","_ALLresp", Rdata.suffix))
+  samples_tissues <- loadRData(paste0(antiPDL1publicIntermediateData,"samples.aPD1.tpm.batch.TISSUE","_ALLresp",Rdata.suffix))
+  samples_all.merged <- bind_rows(samples_tissues)
+}else{
+  print("Run script B_01_aPD1_data_count_deconvolution_processing.R to create table with sample metadata")
+}
+
+
+if (file.exists(paste0(antiPDL1publicIntermediateData,"samples.aPD1.estimate.CIBER.ABS",Rdata.suffix)) && file.exists(paste0(antiPDL1publicIntermediateData,"samples.aPD1.estimate.CIBER.REL",Rdata.suffix))){
+  # Load also metadata with estimate and cibersort
+  samples_meta.Abs <- loadRData(paste0(antiPDL1publicIntermediateData,"samples.aPD1.estimate.CIBER.ABS",Rdata.suffix))
+  samples_meta.Rel <- loadRData(paste0(antiPDL1publicIntermediateData,"samples.aPD1.estimate.CIBER.REL",Rdata.suffix))
+  
+  samples_meta.Abs.compact <- loadRData(paste0(antiPDL1publicIntermediateData,"samples.aPD1.estimate.CIBER.ABS.compact",Rdata.suffix))
+}else{
+  print("Run script B_01_aPD1_data_count_deconvolution_processing.R to get CIBERSORT results")
+}
+
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+
+datatable(samples_all.merged %>% select(run_accession,dataset) %>% group_by(dataset) %>% distinct() %>% dplyr::summarize(n()), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients in all datasets'
+)
+```
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged %>% select(run_accession,response,dataset) %>% group_by(dataset,response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of responders/non-responders in all datasets'
+)
+```
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged %>% select(run_accession,response,tissue) %>% group_by(tissue,response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of responders/non-responders in all tissues'
+)
+```
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged %>% select(run_accession,response,dataset) %>% group_by(response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Total number of responders/non-responders'
+)
+```
+
+# Calculate TuTack, GEP and extract PD-L1 expression
+
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=10, fig.height=8}
+
+### MELANOMAS & KIM
+melanomaSig_datasets<- datasets[c(1:5)]
+aPD1_SigScores_TuTAckmel <- lapply(melanomaSig_datasets, function(x) load_rna_sigScore.weights.allSigs(pathToData=antiPDL1publicIntermediateData,vstData=vst.batch.dataset.RData, fpkmData=fpkm.uq.RData,x, TuTack_mel, gep_weights_df, normalization_genes_df, degs.only, samples_datasets[[x]], "melanoma",addConfCoef = NA,scaleFactor = trainScaleFactor_mel))#intercept.lasso
+
+
+names(aPD1_SigScores_TuTAckmel) <- melanomaSig_datasets
+# Merge list of dfs into one df
+aPD1_SigScores_TuTAckmel.final <-as.data.frame(ldply(aPD1_SigScores_TuTAckmel)[,-1])
+
+### BLADDER & KIM
+bladderSig_datasets<- datasets[c(8:10)]
+aPD1_SigScores_TuTAckblad <- lapply(bladderSig_datasets, function(x) load_rna_sigScore.weights.allSigs(pathToData=antiPDL1publicIntermediateData,vstData=vst.batch.dataset.RData, fpkmData=fpkm.uq.RData, x, TuTack_blad, gep_weights_df, normalization_genes_df, degs.only, samples_datasets[[x]], "bladder",addConfCoef = NA,scaleFactor = trainScaleFactor_blad))#intercept.lasso
+
+names(aPD1_SigScores_TuTAckblad) <- bladderSig_datasets
+# Merge list of dfs into one df
+aPD1_SigScores_TuTAckblad.final <-as.data.frame(ldply(aPD1_SigScores_TuTAckblad)[,-1])
+
+
+### RCC & KIM
+rccSig_datasets<- datasets[c(6,7)]
+aPD1_SigScores_TuTAckrcc <- lapply(rccSig_datasets, function(x) load_rna_sigScore.weights.allSigs(pathToData=antiPDL1publicIntermediateData,vstData=vst.batch.dataset.RData, fpkmData=fpkm.uq.RData, x, TuTack_rcc, gep_weights_df, normalization_genes_df, degs.only, samples_datasets[[x]], "rcc",addConfCoef = NA,scaleFactor = NULL))#intercept.lasso
+
+names(aPD1_SigScores_TuTAckrcc) <- rccSig_datasets
+# Merge list of dfs into one df
+aPD1_SigScores_TuTAckrcc.final <-as.data.frame(ldply(aPD1_SigScores_TuTAckrcc)[,-1])
+# # Change Kim to Kim_TuTblad
+# aPD1_SigScores_TuTAckrcc.final$dataset <- ifelse(aPD1_SigScores_TuTAckrcc.final$dataset=="Kim","Kim_TuTrcc",aPD1_SigScores_TuTAckrcc.final$dataset)
+
+## All tissues together
+aPD1_SigScores_TuTAck <- rbind(aPD1_SigScores_TuTAckmel.final,aPD1_SigScores_TuTAckblad.final,aPD1_SigScores_TuTAckrcc.final)
+dim(aPD1_SigScores_TuTAck)
+```
+
+Merge with rest of sample metadata.
+
+```{r fixMetadata,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=10, fig.height=8}
+#
+samples_all.merged <- merge(samples_all.merged,aPD1_SigScores_TuTAck[,c("run_accession","TuTACK_sigscore", "TIS_sigscore", "PDL1","CD8A","CD8B")], by = "run_accession",all=TRUE)
+samples_meta.Abs <-merge(samples_meta.Abs, aPD1_SigScores_TuTAck[,c("run_accession","TuTACK_sigscore", "TIS_sigscore", "PDL1","CD8A","CD8B")], by = "run_accession",all=TRUE)
+samples_meta.Rel <-merge(samples_meta.Rel, aPD1_SigScores_TuTAck[,c("run_accession","TuTACK_sigscore", "TIS_sigscore", "PDL1","CD8A","CD8B")], by = "run_accession",all=TRUE)
+samples_meta.Abs.compact <-merge(samples_meta.Abs.compact,aPD1_SigScores_TuTAck[,c("run_accession","TuTACK_sigscore", "TIS_sigscore", "PDL1","CD8A","CD8B")], by = "run_accession",all=TRUE)
+
+```
+
+```{r fixMetadata2,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=10, fig.height=8}
+# Fix all samples metadata tables
+samples_all.merged.fix <-fix_immoRunAcc(samples_all.merged,datasets[1:10],7)
+
+samples_meta.Abs.fix <- fix_immoRunAcc(samples_meta.Abs,datasets[1:10],7)
+samples_meta.Rel.fix <- fix_immoRunAcc(samples_meta.Rel,datasets[1:10],7)
+samples_meta.Abs.compact.fix <- fix_immoRunAcc(samples_meta.Abs.compact,datasets[1:10],7)
+```
+
+
+# Loading MiXCR data-VERSION 2[immunarch]: filtering & downsampling {.tabset .tabset-fade .tabset-pills}
+
+As a first step, we are using the immunarch package to load immune repertoire files into R workspace. After immunarch data are loaded, we merge them with the rest of the samples metadata information.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+# #1.2) Replace with the path to the folder with your processed MiXCR data. 
+# file_path = paste0(antiPDL1publicInputData, data.foldersList[1],"/",pathToMixcr)
+# require(devtools)
+# install_version("immunarch", version = "0.6.6", repos = "http://cran.us.r-project.org")
+
+if (file.exists(paste0(antiPDL1publicIntermediateData,"clonesallDataLoad_ImmunarchFULL.aPD1",Rdata.suffix))){
+  immdata.apd1.f<- loadRData(paste0(antiPDL1publicIntermediateData,"clonesallDataLoad_ImmunarchFULL.aPD1",Rdata.suffix))
+}else{
+  # Load data
+  immdata.apd1 <- sapply(data.foldersList[1:10], function(x) loadMiXCR(antiPDL1publicInputData,pathToMixcr,x,suffix=".ALL.txt"), simplify = FALSE)
+  
+
+  # # Save
+  # save(immdata.apd1,file=paste0(antiPDL1publicIntermediateData,"clonesallDataLoad_Immunarch.aPD1",Rdata.suffix))
+  
+  # Add rest of clinical metadata to the meta object in the list
+  immdata.apd1.f <- sapply(datasets[1:10], function(x) addRestMetadata(samples_all.merged.fix, immdata.apd1[[x]], x), simplify = FALSE)
+  immdata.apd1.f.TRA <- sapply(datasets[1:10], function(x) addRestMetadata(samples_all.merged.fix, immdata.apd1[[x]], x), simplify = FALSE)
+  immdata.apd1.f.TRB <- sapply(datasets[1:10], function(x) addRestMetadata(samples_all.merged.fix, immdata.apd1[[x]], x), simplify = FALSE)
+  # Save
+  save(immdata.apd1.f,file=paste0(antiPDL1publicIntermediateData,"clonesallDataLoad_ImmunarchFULL.aPD1",Rdata.suffix))
+}
+  
+
+
+```
+
+Check if all samples are there.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+# Get samples
+
+extract_runAcc <- function(immDF){
+  immdata <- immDF$data
+  immdata <- ldply(immdata)
+  immdata
+}
+
+immdata.apd1.f.extractData <- sapply(datasets[1:10], function(x) extract_runAcc(immdata.apd1.f[[x]]), simplify = FALSE)
+immdata.apd1.mergedS <- ldply(immdata.apd1.f.extractData)
+# Missing samples
+missed <-setdiff(samples_all.merged.fix$run_accession, unique(immdata.apd1.mergedS$.id))
+samples_all.merged.fix[samples_all.merged.fix$run_accession==missed,]
+print(paste0("Samples missed:",missed))
+      
+```
+
+I looked into this sample from Riaz dataset (SRR5088850), and no clonotypes were found, neither TCR nor Ig.
+
+
+**NOTE**: remember to filter for samples included in the analysis, since we are loading all available data, and some are excluded (on-treatment samples etc.)
+
+## Write new clonotype files with only TCR quantified CDR3 sequences, or only BCR quantified CDR3 sequences
+
+Write new clonotype files with only TCR quantifies CDR3 sequences or only BCR quantified CDR3 sequences, to be further processed with VDJtools DownSample, setting a minimum of 20/50/100 clone reads in each sample. The same downsampling is applied across all samples and datasets, since we would also like to merge data across tissues, consistent downsampling is important.
+
+We are not taking the immunarch loaded data, I rather load the initial tables, process them and write a new file for each sample of each dataset.
+
+**NOTE**: This is only used to explore thresholds, sample clone reads, not for downstream analysis.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+
+
+if (file.exists(paste0(antiPDL1publicIntermediateData,"clonesTCRDataLoad_MiXCR.aPD1",Rdata.suffix))){
+  process.res<- loadRData(paste0(antiPDL1publicIntermediateData,"clonesTCRDataLoad_MiXCR.aPD1",Rdata.suffix))
+   process.res.bcr<- loadRData(paste0(antiPDL1publicIntermediateData,"clonesBCRDataLoad_MiXCR.aPD1",Rdata.suffix))
+  # immdata.apd1<- loadRData(paste0(antiPDL1publicIntermediateData,"clonesallDataLoad_Immunarch.aPD1",Rdata.suffix))
+}else{
+  process.res <- sapply(data.foldersList, function(x) createTcrCloneFiles(paste0(rootDir,antiPDL1publicInputData), pathToMixcr,pathToMixcrFilter, x), simplify = FALSE)
+  # Save
+  save(process.res,file=paste0(antiPDL1publicIntermediateData,"clonesTCRDataLoad_MiXCR.aPD1",Rdata.suffix))
+  
+  # BCR
+  process.res.bcr <- sapply(data.foldersList, function(x) createBcrCloneFiles(paste0(rootDir,antiPDL1publicInputData), pathToMixcr,pathToMixcrFilter, x), simplify = FALSE)
+  # Save
+  save(process.res.bcr,file=paste0(antiPDL1publicIntermediateData,"clonesBCRDataLoad_MiXCR.aPD1",Rdata.suffix))
+  
+}
+  
+
+```
+
+
+## Clone Reads of TCR (alpha, beta, gamma, delta) & BCR-IGH CDR3 sequences {.tabset .tabset-fade .tabset-pills}
+
+To decide the downsampling I am counting the clone counts in all the files, and then check how many files per dataset will be possibly removed with the downsampling threshold applied.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+
+cloneReads_allData<- sapply(datasets[1:10], function(x) getTotalCloneReads(x,process.res[[x]]), simplify = FALSE)
+
+cloneReads_allBCRData<- sapply(datasets[1:10], function(x) getTotalCloneReads(x,process.res.bcr[[x]]), simplify = FALSE)
+
+```
+
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+## tCR
+# cloneReads_allDatadata <- merge_recurse(cloneReads_allData)
+cloneReads.df.all <-ldply(cloneReads_allData)
+which(duplicated(cloneReads.df.all$sampleid))
+dim(cloneReads.df.all)# 1118 unique, why so many, looking at samples
+
+# FILTER FOR SAMPLES INCLUDED IN ANALYSIS, OTHERWISE WE ARE LOADING EVERYTHING
+cloneReads.df.all.f <-cloneReads.df.all %>% dplyr::filter(sampleid %in% samples_all.merged.fix$run_accession) %>% droplevels() 
+colnames(cloneReads.df.all.f)[1] <- "dataset"
+
+
+### BCR
+
+cloneReads.df.all.bcr <-ldply(cloneReads_allBCRData)
+which(duplicated(cloneReads.df.all.bcr$sampleid))
+dim(cloneReads.df.all.bcr)# 1118 unique, why so many, looking at samples
+
+# FILTER FOR SAMPLES INCLUDED IN ANALYSIS, OTHERWISE WE ARE LOADING EVERYTHING
+cloneReads.df.all.f.bcr <-cloneReads.df.all.bcr %>% dplyr::filter(sampleid %in% samples_all.merged.fix$run_accession) %>% droplevels() 
+colnames(cloneReads.df.all.f.bcr)[1] <- "dataset"
+
+
+```
+
+### TCR reads
+
+**NUMBER OF SAMPLES WITH TCR CLONE READS ABOVE ZERO**
+
+***
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+pander(aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x > 0, na.rm = TRUE)) %>% dplyr::rename(`SamplesTCRCloneReads > 0` = datasetCloneReads))
+
+```
+
+**NUMBER OF SAMPLES WITH TCR CLONE READS EQUAL TO ZERO**
+
+***
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+pander(aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x == 0, na.rm = TRUE))  %>% dplyr::rename(`SamplesTCRCloneReads = 0` = datasetCloneReads))
+
+```
+
+**SAMPLES WITH TCR CLONE READS EQUAL TO ZERO**
+
+***
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(cloneReads.df.all.f %>% dplyr::filter(datasetCloneReads==0) %>% dplyr::rename(`SamplesTCRCloneReads = 0` = datasetCloneReads), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=5
+  ),
+  caption = 'SAMPLES WITH TCR CLONE READS EQUAL TO ZERO'
+)
+```
+
+**NUMBER OF SAMPLES WITH TCR CLONE READS EQUAL TO ONE**
+
+***
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+pander(aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x == 1, na.rm = TRUE)) %>% dplyr::rename(`SamplesTCRCloneReads = 1` = datasetCloneReads))
+
+```
+
+**NUMBER OF SAMPLES WITH TCR CLONE READS ABOVE 50**
+
+***
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+pander(aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x >= 50, na.rm = TRUE)) %>% dplyr::rename(`SamplesTCRCloneReads > 50` = datasetCloneReads))
+
+```
+
+Summarizing table
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+totalSamples <- cloneReads.df.all.f %>% group_by(dataset) %>% tally() %>% as.data.frame()
+colnames(totalSamples)[2] <- "totalSamples"
+
+equalToZero<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x == 0, na.rm = TRUE))
+colnames(equalToZero)[2] <- "equalToZeroSamples"
+
+equalToOne<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x == 1, na.rm = TRUE))
+colnames(equalToOne)[2] <- "equalToOneSamples"
+
+above50<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x >= 50, na.rm = TRUE))
+colnames(above50)[2] <- "above50Samples"
+
+below50<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x <50, na.rm = TRUE))
+colnames(below50)[2] <- "below50Samples"
+
+above20<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x >= 20, na.rm = TRUE))
+colnames(above20)[2] <- "above20Samples"
+
+below20<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x <20, na.rm = TRUE))
+colnames(below20)[2] <- "below20Samples"
+
+above4<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f, function(x) sum(x >= 4, na.rm = TRUE))
+colnames(above4)[2] <- "above4Samples"
+
+listAll <- list(totalSamples,
+                equalToZero,
+                equalToOne,
+                above4,
+                above20,
+                below20,
+                above50,
+                below50)
+
+
+samplesSummaryTCR <-Reduce(function(x, y) merge(x, y, all=TRUE), listAll)
+# Merge all the above
+
+```
+
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samplesSummaryTCR , extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=5
+  ),
+  caption = 'summary of samples in datasets, according to TCR clone reads'
+)
+```
+
+### BCR-IGH reads
+
+**NUMBER OF SAMPLES WITH BCR-IGH CLONE READS ABOVE ZERO**
+
+***
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+pander(aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x > 0, na.rm = TRUE)) %>% dplyr::rename(`SamplesBCRCloneReads > 0` = datasetCloneReads))
+
+```
+
+**NUMBER OF SAMPLES WITH BCR-IGH CLONE READS EQUAL TO ZERO**
+
+***
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+pander(aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x == 0, na.rm = TRUE))  %>% dplyr::rename(`SamplesBCRCloneReads = 0` = datasetCloneReads))
+
+```
+
+**SAMPLES WITH BCR-IGH CLONE READS EQUAL TO ZERO**
+
+***
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(cloneReads.df.all.f.bcr %>% dplyr::filter(datasetCloneReads==0) %>% dplyr::rename(`SamplesBCRCloneReads = 0` = datasetCloneReads), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=5
+  ),
+  caption = 'SAMPLES WITH TCR CLONE READS EQUAL TO ZERO'
+)
+```
+
+**NUMBER OF SAMPLES WITH BCR-IGH CLONE READS EQUAL TO ONE**
+
+***
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+pander(aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x == 1, na.rm = TRUE)) %>% dplyr::rename(`SamplesBCRCloneReads = 1` = datasetCloneReads))
+
+```
+
+**NUMBER OF SAMPLES WITH BCR-IGH CLONE READS ABOVE 50**
+
+***
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+pander(aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x >= 50, na.rm = TRUE)) %>% dplyr::rename(`SamplesBCRCloneReads > 50` = datasetCloneReads))
+
+```
+
+Summarizing table
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+totalSamples <- cloneReads.df.all.f %>% group_by(dataset) %>% tally() %>% as.data.frame()
+colnames(totalSamples)[2] <- "totalSamples"
+
+equalToZero<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x == 0, na.rm = TRUE))
+colnames(equalToZero)[2] <- "equalToZeroSamples"
+
+equalToOne<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x == 1, na.rm = TRUE))
+colnames(equalToOne)[2] <- "equalToOneSamples"
+
+above50<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x >= 50, na.rm = TRUE))
+colnames(above50)[2] <- "above50Samples"
+
+below50<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x <50, na.rm = TRUE))
+colnames(below50)[2] <- "below50Samples"
+
+above20<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x >= 20, na.rm = TRUE))
+colnames(above20)[2] <- "above20Samples"
+
+below20<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x <20, na.rm = TRUE))
+colnames(below20)[2] <- "below20Samples"
+
+above4<-aggregate(datasetCloneReads ~ dataset, cloneReads.df.all.f.bcr, function(x) sum(x >= 4, na.rm = TRUE))
+colnames(above4)[2] <- "above4Samples"
+
+listAll <- list(totalSamples,
+                equalToZero,
+                equalToOne,
+                above4,
+                above20,
+                below20,
+                above50,
+                below50)
+
+
+samplesSummaryBCR <-Reduce(function(x, y) merge(x, y, all=TRUE), listAll)
+# Merge all the above
+
+```
+
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samplesSummaryBCR , extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=5
+  ),
+  caption = 'summary of samples in datasets, according to BCR-IGH clone reads'
+)
+```
+
+
+# Data processing with immunarch - TCR & BCR-IGH only {.tabset .tabset-fade .tabset-pills}
+
+## Filtering for TCR & BCR-IGH CDR3 sequences only {.tabset .tabset-fade .tabset-pills}
+
+Now we are filtering out immunoglobulin information, to only keep TCR CDR3 sequences.
+And filtering out TCR CDR3 sequences to keep IGH CDR3 sequences.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+immdata.apd1.tcr <-sapply(datasets[1:10], function(x) process_CDR3data(x, immdata.apd1.f[[x]],chainSel="all"), simplify=FALSE)
+immdata.apd1.tcrA <-sapply(datasets[1:10], function(x) process_CDR3data(x, immdata.apd1.f[[x]],chainSel="a"), simplify=FALSE)
+immdata.apd1.tcrB <-sapply(datasets[1:10], function(x) process_CDR3data(x, immdata.apd1.f[[x]],chainSel="b"), simplify=FALSE)
+immdata.apd1.tcrG <-sapply(datasets[1:10], function(x) process_CDR3data(x, immdata.apd1.f[[x]],chainSel="g"), simplify=FALSE)
+immdata.apd1.tcrD <-sapply(datasets[1:10], function(x) process_CDR3data(x, immdata.apd1.f[[x]],chainSel="d"), simplify=FALSE)
+immdata.apd1.igH <-sapply(datasets[1:10], function(x) process_CDR3data(x, immdata.apd1.f[[x]],chainSel="igh"), simplify=FALSE)
+
+
+```
+
+Checκ if all samples are present.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+# Get samples
+immdata.apd1.tcr.extractData <- sapply(datasets[1:10], function(x) extract_runAcc(immdata.apd1.tcr[[x]]), simplify = FALSE)
+immdata.apd1.tcr.mergedS <- ldply(immdata.apd1.tcr.extractData)
+
+immdata.apd1.tcrA.extractData <- sapply(datasets[1:10], function(x) extract_runAcc(immdata.apd1.tcrA[[x]]), simplify = FALSE)
+immdata.apd1.tcrA.mergedS <- ldply(immdata.apd1.tcrA.extractData)
+
+immdata.apd1.tcrB.extractData <- sapply(datasets[1:10], function(x) extract_runAcc(immdata.apd1.tcrB[[x]]), simplify = FALSE)
+immdata.apd1.tcrB.mergedS <- ldply(immdata.apd1.tcrB.extractData)
+
+immdata.apd1.tcrG.extractData <- sapply(datasets[1:10], function(x) extract_runAcc(immdata.apd1.tcrG[[x]]), simplify = FALSE)
+immdata.apd1.tcrG.mergedS <- ldply(immdata.apd1.tcrG.extractData)
+
+immdata.apd1.tcrD.extractData <- sapply(datasets[1:10], function(x) extract_runAcc(immdata.apd1.tcrD[[x]]), simplify = FALSE)
+immdata.apd1.tcrD.mergedS <- ldply(immdata.apd1.tcrD.extractData)
+
+immdata.apd1.igH.extractData <- sapply(datasets[1:10], function(x) extract_runAcc(immdata.apd1.igH[[x]]), simplify = FALSE)
+immdata.apd1.igH.mergedS <- ldply(immdata.apd1.igH.extractData)
+```
+
+### Missing samples
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+
+# Missing samples
+# General TCR
+missedTCR <-setdiff(samples_all.merged.fix$run_accession, unique(immdata.apd1.tcr.mergedS$.id))
+print(paste0("Samples all TCR missed:"))
+
+print(paste0("A total of ", length(missedTCR)," samples with no TCR CDR3 sequences"))
+samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCR,] %>% select(run_accession,dataset) %>% group_by(dataset) %>% distinct() %>% dplyr::summarize(n())
+
+# TCRA
+missedTCRA <-setdiff(samples_all.merged.fix$run_accession, unique(immdata.apd1.tcrA.mergedS$.id))
+print(paste0("Samples all TCRA missed:"))
+print(paste0("A total of ", length(missedTCRA)," samples with no TCRA CDR3 sequences"))
+samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCRA,] %>% select(run_accession,dataset) %>% group_by(dataset) %>% distinct() %>% dplyr::summarize(n())
+
+# TCRB
+missedTCRB <-setdiff(samples_all.merged.fix$run_accession, unique(immdata.apd1.tcrB.mergedS$.id))
+print(paste0("Samples all TCRB missed:"))
+print(paste0("A total of ", length(missedTCRB)," samples with no TCRB CDR3 sequences"))
+samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCRB,] %>% select(run_accession,dataset) %>% group_by(dataset) %>% distinct() %>% dplyr::summarize(n())
+
+# TCRG
+missedTCRG <-setdiff(samples_all.merged.fix$run_accession, unique(immdata.apd1.tcrG.mergedS$.id))
+print(paste0("Samples all TCRG missed:"))
+
+print(paste0("A total of ", length(missedTCRG)," samples with no TCRG CDR3 sequences"))
+samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCRG,] %>% select(run_accession,dataset) %>% group_by(dataset) %>% distinct() %>% dplyr::summarize(n())
+
+# TCRD
+missedTCRD <-setdiff(samples_all.merged.fix$run_accession, unique(immdata.apd1.tcrD.mergedS$.id))
+print(paste0("Samples all TCRD missed:"))
+
+print(paste0("A total of ", length(missedTCRD)," samples with no TCRD CDR3 sequences"))
+samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCRD,] %>% select(run_accession,dataset) %>% group_by(dataset) %>% distinct() %>% dplyr::summarize(n())
+
+
+# IGH
+missedIGH <-setdiff(samples_all.merged.fix$run_accession, unique(immdata.apd1.igH.mergedS$.id))
+print(paste0("Samples all IGH missed:"))
+print(paste0("A total of ", length(missedIGH)," samples with no IGH CDR3 sequences"))
+samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedIGH,] %>% select(run_accession,dataset) %>% group_by(dataset) %>% distinct() %>% dplyr::summarize(n())
+```
+
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCR,], extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Missed samples TCR'
+)
+```
+
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCRA,]
+, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Missed samples TCR alpha'
+)
+```
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCRB,], extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Missed samples TCR beta'
+)
+```
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCRG,], extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Missed samples TCR gamma'
+)
+```
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedTCRD,], extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Missed samples TCR delta'
+)
+```
+
+```{r,warning=F, message=F, results=F, echo=F,eval=TRUE}
+datatable(samples_all.merged.fix[samples_all.merged.fix$run_accession %in% missedIGH,], extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Missed samples BCR IGH'
+)
+```
+
+We are also filtering out all samples not included in the analysis.
+
+Many of the Liu samples are empty DFs, because no TCR CDR3 sequences were found.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+# sapply(datasets[1:10], function(x) samples_all.merged.fix %>% dplyr::filter(dataset %in% x) %>% droplevels() %>% nrow())
+
+
+immdata.apd1.tcr.f <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcr[[x]]), simplify = FALSE)
+immdata.apd1.tcrA.f <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcrA[[x]]), simplify = FALSE)
+immdata.apd1.tcrB.f <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcrB[[x]]), simplify = FALSE)
+immdata.apd1.tcrG.f <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcrG[[x]]), simplify = FALSE)
+immdata.apd1.tcrD.f <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcrD[[x]]), simplify = FALSE)
+immdata.apd1.igH.f <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.igH[[x]]), simplify = FALSE)
+
+```
+
+Try:
+
+1. No downsampling
+  * Filter functional / non-functional / in-frame / out-of-frame clonotypes
+  * calculate repertoire diversity measures
+      - chao1: a nonparameteric asymptotic estimator of species richness (number of species in a population)
+      - shannon entropy
+  * visualize for response
+2. Try downsampling
+  * Downsample
+  * Filter functional / non-functional / in-frame / out-of-frame clonotypes
+  
+  * calculate repertoire diversity measures
+      - chao1: a nonparameteric asymptotic estimator of species richness (number of species in a population)
+      - shannon entropy
+  * visualize for response
+
+## Functional CDR3 and downsampling {.tabset .tabset-fade .tabset-pills}
+
+immunarch package gives an error when trying to downsample to read clones in samples that have less reads than the downsampling threshold. So what we do is filter out beforehand all samples that have less clone reads than what is set. 
+The reasoning behind this is that for samples that we have less read clones we basically cannot judge about clonality and richness, we consider this as a technical issue related to extracting TCR sequences from bulk RNA-Seq data, usually resulting in very low tCR seq abundances, from which we cannot make any diversity estimations.
+
+Up until now we have five lists of data:
+
+* all TCR chains clones
+* TCRa clones
+* TCRb clones
+* TCRg clones
+* TCRd clones
+* IGH clones
+
+In the downstream analysis from here on, we will continue with mainly alpha and beta CDR3 sequences, but try to process the others as well, in case we need them.
+
+### Filter out samples with low TCR CD3 reads {.tabset .tabset-fade .tabset-pills}
+
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+# sapply(datasets[1:10], function(x) samples_all.merged.fix %>% dplyr::filter(dataset %in% x) %>% droplevels() %>% nrow())
+
+# Filter to include only samples considered in the analysis
+immdata.apd1.tcr.fl <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcr[[x]]), simplify = FALSE)
+immdata.apd1.tcrA.fl <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcrA[[x]]), simplify = FALSE)
+immdata.apd1.tcrB.fl <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcrB[[x]]), simplify = FALSE)
+immdata.apd1.tcrG.fl <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcrG[[x]]), simplify = FALSE)
+immdata.apd1.tcrD.fl <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.tcrD[[x]]), simplify = FALSE)
+immdata.apd1.igH.fl <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.igH[[x]]), simplify = FALSE)
+
+# Get number of TCRb clones to check how many we have
+cloneReads_tcrb<- sapply(datasets[1:10], function(x) getTotalCloneReads_immArch(x,immdata.apd1.tcrB.fl[[x]]$data), simplify = FALSE)
+cloneReads_tcrb.df <-ldply(cloneReads_tcrb)
+colnames(cloneReads_tcrb.df)[1] <- "dataset"
+# which(duplicated(cloneReads_tcrb.df$sampleid))
+# dim(cloneReads_tcrb.df) #  ONE SAMPLE MISSING, WHY
+
+# TCRa
+cloneReads_tcra<- sapply(datasets[1:10], function(x) getTotalCloneReads_immArch(x,immdata.apd1.tcrA.fl[[x]]$data), simplify = FALSE)
+cloneReads_tcra.df <-ldply(cloneReads_tcra)
+colnames(cloneReads_tcra.df)[1] <- "dataset"
+
+
+# cloneReads.df.all.f
+colnames(cloneReads.df.all.f)[3] <- "CloneReads.all"
+# cloneReads_tcrb.df
+colnames(cloneReads_tcrb.df)[3] <- "CloneReads.TCRb"
+# cloneReads_tcra.df
+colnames(cloneReads_tcra.df)[3] <- "CloneReads.TCRa"
+
+cloneReads.df <- merge(cloneReads_tcrb.df,cloneReads.df.all.f, by=c("dataset","sampleid"), all=TRUE)
+cloneReads.df <- merge(cloneReads.df,cloneReads_tcra.df, by=c("dataset","sampleid"), all=TRUE)
+cloneReads.df <- cloneReads.df[,c(1,2,4,5,3)]
+
+cloneReads.df <- merge(cloneReads.df, samples_all.merged.fix[,c(1,2,10)], by.x = "sampleid", by.y = "run_accession", all.x=TRUE)
+
+## NOW FOR BCR
+# IGH
+cloneReads_igh<- sapply(datasets[1:10], function(x) getTotalCloneReads_immArch(x,immdata.apd1.igH.fl[[x]]$data), simplify = FALSE)
+cloneReads_igh.df <-ldply(cloneReads_igh)
+colnames(cloneReads_igh.df)[1] <- "dataset"
+colnames(cloneReads_igh.df)[3] <- "CloneReads.IGH"
+
+
+# NOW MERGE WITH BCR IGH CLONE READS TABLE
+cloneReads.df <- merge(cloneReads.df, cloneReads_igh.df, by = c("dataset","sampleid"), all.x=TRUE)
+
+
+```
+
+Melanoma datasets seem to have higher clone reads compared to RCC and most particularly comparing against bladder. Both Mariathasan and Powles have very low TCRbeta CDR3 clone reads.
+
+Check figures below where for every sample, total TCR (all chains) reads and TCRbeta, TCRalpha reads are presented. 
+
+
+### Only IGH & TCR clones {.tabset .tabset-fade .tabset-pills}
+
+
+```{r,warning=F, message=F, results=F, echo=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+
+rplot <-sapply(datasets[1:10], function(x) plot_CountCloneReads(cloneReads.df,"TCR Clone reads","Clone Reads","dataset",x,yInter = 10,printLabels=FALSE,transformY=FALSE), simplify = FALSE)
+```
+
+
+### All Ig & TCR clones {.tabset .tabset-fade .tabset-pills}
+
+For a comparison with the full exported clones from mixcr we also calculate the clone reads for full TCR, Ig repertoire, and see how many samples pass the clone read threshold of 100.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=10, fig.height=12, eval=TRUE}
+# Filter to include only samples considered in the analysis
+immdata.apd1.f.f <-sapply(datasets[1:10], function(x) sampleFilteringRunAcc(immdata.apd1.f[[x]]), simplify = FALSE)
+
+
+# Get number of TCRb clones to check how many we have
+cloneReads_all<- sapply(datasets[1:10], function(x) getTotalCloneReads_immArch(x,immdata.apd1.f.f[[x]]$data), simplify = FALSE)
+cloneReads_all.df <-ldply(cloneReads_all)
+colnames(cloneReads_all.df)[1] <- "dataset"
+
+cloneReads_all.df <- merge(cloneReads_all.df, samples_all.merged.fix[,c(1,2,10)], by.x = "sampleid", by.y = "run_accession", all.x=TRUE)
+```
+
+```{r,warning=F, message=F, results=F, echo=F,echo=TRUE, eval=FALSE,results='asis', fig.width=10, fig.height=12}
+
+rplotALL <-sapply(datasets[1:10], function(x) plot_CountCloneReads(cloneReads_all.df,"ALL Clone reads","Clone Reads","dataset",x,yInter = 100,printLabels=FALSE,transformY=TRUE), simplify = FALSE)
+```
+
+Merge all of them and see:
+
+```{r,warning=F, message=F, results=F, echo=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+cloneReads_all.df.merged <- merge(cloneReads_all.df,cloneReads.df, by=c("sampleid", "dataset","title", "response"), all=TRUE)
+colnames(cloneReads_all.df.merged )[5:6] <-c("CloneReads.ALL","CloneReads.TCR")
+rplotALL <-sapply(datasets[1:10], function(x) plot_CountCloneReads(cloneReads_all.df.merged,"ALL Clone reads","Clone Reads","dataset",x,yInter = 100,printLabels=FALSE,transformY=TRUE), simplify = FALSE)
+```
+
+
+We can see that by taking the full Ig and ΤCR repertoire, there are a few samples who have less CDR3 sequencing reads than 100. We consider all samples passing this threshold to have clonotypes we can trust, so these are samples we trust, the rest sampels are excluded. Based on this, the downsampling threshold we set when selecting for TCR clones, and specifically, when downsampling TCRalpha chain or TCRbeta chain CDR3 sequences will be much less, for now 4 reads.
+
+First finding which samples have very few reads. I am calculating for the following thresholds:
+1. 0 reads
+2. 1 reads
+3. 4 reads
+4. 10 reads
+5. 20 reads
+6. 50 reads
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=10, fig.height=12, eval=TRUE}
+#TCRB
+cloneReads_tcrb.filt0 <- sapply(datasets[1:10], function(x) cloneReads_tcrb[[x]] %>% dplyr::filter(datasetCloneReads >= 0) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcrb.filt1 <- sapply(datasets[1:10], function(x) cloneReads_tcrb[[x]] %>% dplyr::filter(datasetCloneReads >= 1) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcrb.filt3 <- sapply(datasets[1:10], function(x) cloneReads_tcrb[[x]] %>% dplyr::filter(datasetCloneReads >= 3) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcrb.filt4 <- sapply(datasets[1:10], function(x) cloneReads_tcrb[[x]] %>% dplyr::filter(datasetCloneReads >= 4) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcrb.filt10 <- sapply(datasets[1:10], function(x) cloneReads_tcrb[[x]] %>% dplyr::filter(datasetCloneReads >= 10) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcrb.filt20 <- sapply(datasets[1:10], function(x) cloneReads_tcrb[[x]] %>% dplyr::filter(datasetCloneReads >= 20) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcrb.filt50 <- sapply(datasets[1:10], function(x) cloneReads_tcrb[[x]] %>% dplyr::filter(datasetCloneReads >= 50) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+#TCRA
+cloneReads_tcra.filt0 <- sapply(datasets[1:10], function(x) cloneReads_tcra[[x]] %>% dplyr::filter(datasetCloneReads >= 0) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcra.filt1 <- sapply(datasets[1:10], function(x) cloneReads_tcra[[x]] %>% dplyr::filter(datasetCloneReads >= 1) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcra.filt3 <- sapply(datasets[1:10], function(x) cloneReads_tcra[[x]] %>% dplyr::filter(datasetCloneReads >= 3) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcra.filt4 <- sapply(datasets[1:10], function(x) cloneReads_tcra[[x]] %>% dplyr::filter(datasetCloneReads >= 4) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcra.filt10 <- sapply(datasets[1:10], function(x) cloneReads_tcra[[x]] %>% dplyr::filter(datasetCloneReads >= 10) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcra.filt20 <- sapply(datasets[1:10], function(x) cloneReads_tcra[[x]] %>% dplyr::filter(datasetCloneReads >= 20) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_tcra.filt50 <- sapply(datasets[1:10], function(x) cloneReads_tcra[[x]] %>% dplyr::filter(datasetCloneReads >= 50) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+# Perhaps different downsampling depending on tissue
+
+
+#IGH
+cloneReads_igh.filt0 <- sapply(datasets[1:10], function(x) cloneReads_igh[[x]] %>% dplyr::filter(datasetCloneReads >= 0) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_igh.filt1 <- sapply(datasets[1:10], function(x) cloneReads_igh[[x]] %>% dplyr::filter(datasetCloneReads >= 1) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_igh.filt3 <- sapply(datasets[1:10], function(x) cloneReads_igh[[x]] %>% dplyr::filter(datasetCloneReads >= 3) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_igh.filt4 <- sapply(datasets[1:10], function(x) cloneReads_igh[[x]] %>% dplyr::filter(datasetCloneReads >= 4) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_igh.filt10 <- sapply(datasets[1:10], function(x) cloneReads_igh[[x]] %>% dplyr::filter(datasetCloneReads >= 10) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_igh.filt20 <- sapply(datasets[1:10], function(x) cloneReads_igh[[x]] %>% dplyr::filter(datasetCloneReads >= 20) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+
+cloneReads_igh.filt50 <- sapply(datasets[1:10], function(x) cloneReads_igh[[x]] %>% dplyr::filter(datasetCloneReads >= 50) %>% droplevels() %>% pull(sampleid), simplify = FALSE)
+```
+
+**We continue with keeping samples that have >=4 clone reads.**
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=10, fig.height=12, eval=TRUE}
+
+## DOWNSAMPLING
+immdata.apd1.tcrB.filt4 <-sapply(datasets[1:10], function(x) sampleFilteringRunAccForDowns(immdata.apd1.tcrB.fl[[x]], cloneReads_tcrb.filt4[[x]], x), simplify = FALSE)
+
+immdata.apd1.tcrA.filt4 <-sapply(datasets[1:10], function(x) sampleFilteringRunAccForDowns(immdata.apd1.tcrA.fl[[x]], cloneReads_tcra.filt4[[x]], x), simplify = FALSE)
+
+
+immdata.apd1.igH.filt4 <-sapply(datasets[1:10], function(x) sampleFilteringRunAccForDowns(immdata.apd1.igH.fl[[x]], cloneReads_igh.filt4[[x]], x), simplify = FALSE)
+
+immdata.apd1.igH.filt10 <-sapply(datasets[1:10], function(x) sampleFilteringRunAccForDowns(immdata.apd1.igH.fl[[x]], cloneReads_igh.filt10[[x]], x), simplify = FALSE)
+## NO DS, BUT FUNCITONAL FOR IMMUNARCH
+# Basically only filtering to allow imjmunarch to work - So samples that have zero clones are removed.
+immdata.apd1.tcrB.filt <-sapply(datasets[1:10], function(x) sampleFilteringRunAccForDowns(immdata.apd1.tcrB.fl[[x]], cloneReads_tcrb.filt1[[x]], x), simplify = FALSE)
+
+immdata.apd1.tcrA.filt <-sapply(datasets[1:10], function(x) sampleFilteringRunAccForDowns(immdata.apd1.tcrA.fl[[x]], cloneReads_tcra.filt1[[x]], x), simplify = FALSE)
+
+immdata.apd1.igH.filt <-sapply(datasets[1:10], function(x) sampleFilteringRunAccForDowns(immdata.apd1.igH.fl[[x]], cloneReads_igh.filt1[[x]], x), simplify = FALSE)
+
+```
+
+# Processing: functional clonotypes, downsampling, diversity estimation {.tabset .tabset-fade .tabset-pills}
+
+Using functionalities provided by the immunarch package, we calculate the following diversity metrics:
+
+* Chao 1
+* Hill
+* d50
+* d30
+* Ecological diversity div
+* div30
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval= TRUE}
+# DOWNSAMPLING
+# TCRA
+immdata.apd1.proc.TcrA <-sapply(datasets[1:10], function(x) mixcrProcessing(x, immdata.apd1.tcrA.filt4[[x]], filterCoding = TRUE, downSampling = FALSE, dsMethod = "downsample", dsN =4), simplify=FALSE)
+# TCRB
+immdata.apd1.proc.TcrB <-sapply(datasets[1:10], function(x) mixcrProcessing(x, immdata.apd1.tcrB.filt4[[x]], filterCoding = TRUE, downSampling = FALSE, dsMethod = "downsample", dsN =4), simplify=FALSE)
+
+# IGH
+immdata.apd1.proc.igH <-sapply(datasets[1:10], function(x) mixcrProcessing(x, immdata.apd1.igH.filt10[[x]], filterCoding = TRUE, downSampling = FALSE, dsMethod = "downsample", dsN =4), simplify=FALSE)
+
+# NO DOWNSAMPLING
+# TCRA
+immdata.apd1.proc.TcrA.noDS <-sapply(datasets[1:10], function(x) mixcrProcessing(x, immdata.apd1.tcrA.filt[[x]], filterCoding = TRUE, downSampling = FALSE, dsMethod = "downsample", dsN =0), simplify=FALSE)
+# TCRB
+immdata.apd1.proc.TcrB.noDS <-sapply(datasets[1:10], function(x) mixcrProcessing(x, immdata.apd1.tcrB.filt[[x]], filterCoding = TRUE, downSampling = FALSE, dsMethod = "downsample", dsN =0), simplify=FALSE)
+
+# IGH
+immdata.apd1.proc.igH.noDS <-sapply(datasets[1:10], function(x) mixcrProcessing(x, immdata.apd1.igH.filt[[x]], filterCoding = TRUE, downSampling = FALSE, dsMethod = "downsample", dsN =0), simplify=FALSE)
+
+```
+
+## Diversity metrics with immunarch {.tabset .tabset-fade .tabset-pills}
+
+Now we make use of the immunarch package functionalities to calculate several diversity measures/indices.
+From the [immunarch site](https://immunarch.com/articles/web_only/v6_diversity.html):
+
+Several approaches to the estimation of repertoire diversity are implemented in the repDiversity function. The .method parameter similarly to abovementionned functions sets the means for diversity estimation. You can choose one of the following methods:
+
+* chao1 - Chao1 estimator is a nonparameteric asymptotic estimator of species richness (number of species in a population).: chao1 returns 4 values: estimated number of species, standart deviation of this number and two 95. Chao1 is a nonparametric method for estimating the number of species in a community. The Chao richness estimator was developed by Anne Chao and is based on the concept that rare species infer the most information about the number of missing species
+
+* hill - Hill numbers are a mathematically unified family of diversity indices (differing only by an exponent q).
+
+* div - True diversity, or the effective number of types, refers to the number of equally-abundant types needed for the average proportional abundance of the types to equal that observed in the dataset of interest where all types may not be equally abundant.
+
+* gini.simp - The Gini-Simpson index is the probability of interspecific encounter, i.e., probability that two entities represent different types.
+
+* inv.simp - Inverse Simpson index is the effective number of types that is obtained when the weighted arithmetic mean is used to quantify average proportional abundance of types in the dataset of interest.
+
+* gini - The Gini coefficient measures the inequality among values of a frequency distribution (for example levels of income). A Gini coefficient of zero expresses perfect equality, where all values are the same (for example, where everyone has the same income). A Gini coefficient of one (or 100 percents ) expresses maximal inequality among values (for example where only one person has all the income).
+
+* raref - Rarefaction is a technique to assess species richness from the results of sampling through extrapolation.** PACKAGE GIVES ERROR**
+
+* d50 is a recently developed immune diversity estimate. It calculates the minimum number of distinct clonotypes amounting to greater than or equal to 50 percent of a total of sequencing reads obtained following amplification and sequencing
+
+* dXX is a similar to d50 index where XX corresponds to desirable percent of total sequencing reads
+
+The .col parameter regulates what sequences and gene segments to choose, we choose to estimate diversity **on the aminoacid level.**
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval= TRUE}
+
+if (file.exists(paste0(antiPDL1publicIntermediateData,"tcrAclones_downSampled.divEst.aPD1.min4.v1",Rdata.suffix))){
+  # TCRA, B downsampled
+  immdata.apd1.proc.TcrA.divEst<- loadRData(paste0(antiPDL1publicIntermediateData,"tcrAclones_downSampled.divEst.aPD1.min4.v1",Rdata.suffix))
+  immdata.apd1.proc.TcrB.divEst<- loadRData(paste0(antiPDL1publicIntermediateData,"tcrBclones_downSampled.divEst.aPD1.min4.v1",Rdata.suffix))
+  immdata.apd1.proc.igH.divEst<- loadRData(paste0(antiPDL1publicIntermediateData,"igHclones_downSampled.divEst.aPD1.min10.v1",Rdata.suffix))
+  # TCRA, B not downsampled
+  immdata.apd1.proc.TcrA.divEst.noDS<- loadRData(paste0(antiPDL1publicIntermediateData,"tcrAclones_NOTdownSampled.divEst.aPD1.v1",Rdata.suffix))
+  immdata.apd1.proc.TcrB.divEst.noDS<- loadRData(paste0(antiPDL1publicIntermediateData,"tcrBclones_NOTdownSampled.divEst.aPD1.v1",Rdata.suffix))
+  immdata.apd1.proc.igH.divEst.noDS<- loadRData(paste0(antiPDL1publicIntermediateData,"igHclones_NOTdownSampled.divEst.aPD1.v1",Rdata.suffix))
+
+}else{
+  ## WITH DOWNSAMPLING
+  # TCRA
+  immdata.apd1.proc.TcrA.divEst <-sapply(datasets[1:10], function(x) diversityCalculations(immdata.apd1.proc.TcrA[[x]],stepSelected = 1), simplify=FALSE)
+  save(immdata.apd1.proc.TcrA.divEst,file=paste0(antiPDL1publicIntermediateData,"tcrAclones_downSampled.divEst.aPD1.min4.v1",Rdata.suffix))
+  # TCRB
+  immdata.apd1.proc.TcrB.divEst <-sapply(datasets[1:10], function(x) diversityCalculations(immdata.apd1.proc.TcrB[[x]],stepSelected = 1), simplify=FALSE)
+  save(immdata.apd1.proc.TcrB.divEst,file=paste0(antiPDL1publicIntermediateData,"tcrBclones_downSampled.divEst.aPD1.min4.v1",Rdata.suffix))
+    # IGH
+  immdata.apd1.proc.igH.divEst <-sapply(datasets[1:10], function(x) diversityCalculations(immdata.apd1.proc.igH[[x]],stepSelected = 1), simplify=FALSE)
+  save(immdata.apd1.proc.igH.divEst,file=paste0(antiPDL1publicIntermediateData,"igHclones_downSampled.divEst.aPD1.min10.v1",Rdata.suffix))
+  
+  ## NO DOWNSAMPLING
+  # TCRA
+  immdata.apd1.proc.TcrA.divEst.noDS <-sapply(datasets[1:10], function(x) diversityCalculations(immdata.apd1.proc.TcrA.noDS[[x]],stepSelected = 1), simplify=FALSE)
+  save(immdata.apd1.proc.TcrA.divEst.noDS,file=paste0(antiPDL1publicIntermediateData,"tcrAclones_NOTdownSampled.divEst.aPD1.v1",Rdata.suffix))
+  # TCRB
+  immdata.apd1.proc.TcrB.divEst.noDS <-sapply(datasets[1:10], function(x) diversityCalculations(immdata.apd1.proc.TcrB.noDS[[x]],stepSelected = 1), simplify=FALSE)
+  save(immdata.apd1.proc.TcrB.divEst.noDS,file=paste0(antiPDL1publicIntermediateData,"tcrBclones_NOTdownSampled.divEst.aPD1.v1",Rdata.suffix))
+  # IGH
+  immdata.apd1.proc.igH.divEst.noDS <-sapply(datasets[1:10], function(x) diversityCalculations(immdata.apd1.proc.igH.noDS[[x]],stepSelected = 1), simplify=FALSE)
+  save(immdata.apd1.proc.igH.divEst.noDS,file=paste0(antiPDL1publicIntermediateData,"igHclones_NOTdownSampled.divEst.aPD1.v1",Rdata.suffix))
+  
+}
+
+```
+
+### TCR alpha - downsampled {.tabset .tabset-fade .tabset-pills}
+
+Visualizing the diversity estimations for each dataset
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=14, fig.height=10}
+plotDivs <-sapply(datasets[1:10], function(x) diversityEst_vis(x,immdata.apd1.proc.TcrA.divEst[[x]]), simplify=FALSE)
+```
+
+
+### TCR beta - downsampled{.tabset .tabset-fade .tabset-pills}
+
+Visualizing the diversity estimations for each dataset
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=14, fig.height=10}
+plotDivs <-sapply(datasets[1:10], function(x) diversityEst_vis(x,immdata.apd1.proc.TcrB.divEst[[x]]), simplify=FALSE)
+```
+
+
+### IGH - downsampled{.tabset .tabset-fade .tabset-pills}
+
+Visualizing the diversity estimations for each dataset
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=14, fig.height=10}
+plotDivs <-sapply(datasets[1:10], function(x) diversityEst_vis(x,immdata.apd1.proc.igH.divEst[[x]]), simplify=FALSE)
+```
+
+### TCR alpha - NOT downsampled {.tabset .tabset-fade .tabset-pills}
+
+Visualizing the diversity estimations for each dataset
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=14, fig.height=10}
+plotDivs <-sapply(datasets[1:10], function(x) diversityEst_vis(x,immdata.apd1.proc.TcrA.divEst.noDS[[x]]), simplify=FALSE)
+```
+
+
+### TCR beta - NOT downsampled{.tabset .tabset-fade .tabset-pills}
+
+Visualizing the diversity estimations for each dataset
+```{r,warning=F, message=F,echo=TRUE, eval=FALSE,results='asis', fig.width=14, fig.height=10}
+plotDivs <-sapply(datasets[1:10], function(x) diversityEst_vis(x,immdata.apd1.proc.TcrB.divEst.noDS[[x]]), simplify=FALSE)
+
+```
+
+
+
+### IGH beta - NOT downsampled{.tabset .tabset-fade .tabset-pills}
+
+Visualizing the diversity estimations for each dataset
+```{r,warning=F, message=F,echo=TRUE, eval=FALSE,results='asis', fig.width=14, fig.height=10}
+plotDivs <-sapply(datasets[1:10], function(x) diversityEst_vis(x,immdata.apd1.proc.igH.divEst.noDS[[x]]), simplify=FALSE)
+```
+
+## Modeled entropy [binfotron package] {.tabset .tabset-fade .tabset-pills}
+
+From the paper of [Bortone et al.](https://cancerimmunolres.aacrjournals.org/content/9/1/103)
+
+Evenness was calculated as Shannon entropy / Log(Richness)(27). Evenness produces a comparable result to the “productive clonality” as reported by Adaptive Biotechnologies. Their “clonality” is 1 - evenness, although they use log base 2 in both their entropy and normalization (personal communication). d25, d50 and d75 (dXX) indices were calculated as
+described by VDJTools(28) GitHub repository: “The estimate equals to 1 - n / N, where n is the minimum number of clonotypes accounting for at least XX% of the total reads and code N is the total number of clonotypes in the sample.”
+
+In the __Model generation__ section:
+
+Samples were balanced by the number of
+events for both the discovery-validation and test-training set splits. For the calculation of modeled entropy,
+analyzed samples were required to have an abundance of 8 or higher for both  and  TCR chains
+
+Although it has been reported that evenness tends to overestimate diversity at lower abundances(41), we were surprised to see that this overestimation was much more pronounced in samples with lower initial diversity. Not only would this systematic overestimation of evenness obfuscate correlations with diversity, but in datasets where samples with higher true diversity also have higher abundance, this normalization could flip the direction of a correlation.
+
+In the __Results__ section:
+Regardless of the TCR chain or diversity index used, no measurements supported accurate estimation of true index values from RNA-seq simulated reads. An ideal diversity index should be stable across a range of abundance and entropy values. Surprisingly, even at the higher abundances of amplicon simulated reads, evenness still failed to track well with either the ground truth evenness or Shannon entropy.
+
+In the __Modeling entropy for low abundance samples__ section:
+
+Given the stability of Shannon entropy as a diversity index across a wide range of parameters, we sought to
+derive a model to predict the true TCR repertoire entropy when abundances are low (i.e., in conditions of
+undersampling such as tumor RNA sequencing experiments).
+
+Here we determined the abundance needed at a measured Shannon entropy to be within 5% of the ground truth
+Shannon entropy. If a sample’s measured Shannon entropy and abundance put the sample over this threshold the measured Shannon entropy was taken prima facie and no correction was made for our model entropy calculation
+
+A robust estimate for diversity should also be more internally consistent, providing similar predictions across a range of TCR abundances.
+
+Together, these results demonstrated that the model-based diversity estimates showedimproved correlations with true biological diversity and better internal consistency.
+
+
+In the __Predicting patient outcomes using TCR modeled entropy__ section:
+
+With model-based corrected diversity providing better correlations with biological diversity than other metrics,
+we then asked: Does this improved metric of diversity improve prediction of survival of cancer patients? We
+note that even a perfect measurement of diversity may not predict survival in cancer.
+
+Repertoire inference from RNA-seq data is untrustworthy whendegraded RNA derived from FFPE tissue is used as template for sequencing library preparation(46). IncreasedTCR repertoire diversity was associated with improved survival in melanoma patients treated with nivolumab.
+
+Only the significance of TCR for all TCGAsamples was revealed if evenness was used as the diversity normalization
+
+In the __DISCUSSION__ section:
+
+TCR repertoire diversity reflects the degree of clonal expansion in a T cell population and thus is a valuable
+biological readout as well as a potential biomarker of health or disease. Here, we showed that accurate
+measurement of TCR repertoire diversity required correction for undersampling that may occur as a result of
+biological limitations, such as testing only a small portion of a blood or tissue-resident T cell population of
+interest, or technical limitations such as low sequencing read coverage for a given sample. Optimal estimation
+of true population diversity also required use of the most accurate algorithm for TCR repertoire inference.
+
+existing methods of calculating diversity from these repertoire counts were inaccurate under typical RNA-seq
+conditions. We developed a method for correcting diversity estimates that can be applied to any dataset using
+software supplied with this article. Of note, models built from TCR alpha data performed well when applied to TCR beta
+datasets and vice versa. Even “chain agnostic” models trained on subsampled population counts performed
+well on TCR data, suggesting that our method may be generally extensible to entropy estimation in the context
+of undersampling beyond TCR repertoire data as long as the expected diversity of the sampled population is
+within the range provided to the model. In datasets where sample entropy estimates fall outside the range of
+entropies upon which the model was trained (0.98 to 8.11), we recommend training a new entropy correction
+model on the desired true Shannon entropy range.
+
+**While our method of modeling the true Shannon entropy from RNA-seq data should effectively correct entropy
+measurements with different abundances, it should only be used to correct entropy within a batch of samples.**
+
+**NOTE**: I need to contact the authors to understand the above.
+
+Given the differences in sensitivity across sample preparations and sequencing methods, it would be very difficult to make a generalizable tool that corrects across sequencing methods. For these high-quality high-abundance
+sequencing methods, we recommend using Shannon entropy as this metric approaches the ground truth Shannon entropy when the number of reads is in the tens of thousands range or higher. The use of evenness and “productive clonality” (1-evenness) is strongly discouraged.
+
+Additionally, there is emerging evidence that immune checkpoint inhibition efficacy is driven by clonal expansion that happens after initiation of therapy(15,47,48). Thus, we expect that more accurate measurement of TCR repertoire
+diversity, as well as measurements of repertoire diversity while on therapy, will provide better biomarkers of response. We also expect that the magnitude and direction of associations between TCR repertoire diversity and clinical outcomes will vary by therapeutic mechanism of action. If, as our results suggest, clonal expansion occurs after administering immune checkpoint blockade, then monitoring the changes in diversity upon receiving ICP therapy could be an early indicator of how well a patient is responding to immunotherapy. Our method of accurately estimating diversity even with low counts may make such diagnostics readily affordable and aid in numerous fields that must rely upon assessing diversity from subsampled populations.
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+
+# TRA, B DOWNSAMPLED
+immdata.apd1.proc.TcrA.divEst <-sapply(datasets[1:10], function(x) get_modeledEntropy(immdata.apd1.proc.TcrA.divEst[[x]], minAbund = 4,colnameEntropy="modEntr.ds" ), simplify=FALSE)
+immdata.apd1.proc.TcrB.divEst <-sapply(datasets[1:10], function(x) get_modeledEntropy(immdata.apd1.proc.TcrB.divEst[[x]], minAbund = 4,colnameEntropy="modEntr.ds" ), simplify=FALSE)
+immdata.apd1.proc.igH.divEst <-sapply(datasets[1:10], function(x) get_modeledEntropy(immdata.apd1.proc.igH.divEst[[x]], minAbund = 4,colnameEntropy="modEntr.ds" ), simplify=FALSE)
+
+
+```
+
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+# TRA, B NOT DOWNSAMPLED
+immdata.apd1.proc.TcrA.divEst.noDS <-sapply(datasets[1:10], function(x) get_modeledEntropy(immdata.apd1.proc.TcrA.divEst.noDS[[x]], minAbund = 1,colnameEntropy="modEntr.nods" ), simplify=FALSE)
+immdata.apd1.proc.TcrB.divEst.noDS <-sapply(datasets[1:10], function(x) get_modeledEntropy(immdata.apd1.proc.TcrB.divEst.noDS[[x]], minAbund = 1,colnameEntropy="modEntr.nods" ), simplify=FALSE)
+immdata.apd1.proc.igH.divEst.noDS <-sapply(datasets[1:10], function(x) get_modeledEntropy(immdata.apd1.proc.igH.divEst.noDS[[x]], minAbund = 1,colnameEntropy="modEntr.nods" ), simplify=FALSE)
+
+```
+
+### TCRA: Plots of modeled entropy {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F, results=F, echo=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+# TRA
+#ds
+modeledEntropy.tcrA.ds <-sapply(datasets[1:10], function(x) immdata.apd1.proc.TcrA.divEst[[x]]$diversityEst$modEntr.ds, simplify = FALSE)
+modeledEntropy.tcrA.ds.df <-ldply(modeledEntropy.tcrA.ds)
+colnames(modeledEntropy.tcrA.ds.df)[1]<- "dataset"
+
+#no ds
+modeledEntropy.tcrA.nods <-sapply(datasets[1:10], function(x) immdata.apd1.proc.TcrA.divEst.noDS[[x]]$diversityEst$modEntr.nods, simplify = FALSE)
+modeledEntropy.tcrA.nods.df <-ldply(modeledEntropy.tcrA.nods)
+colnames(modeledEntropy.tcrA.nods.df)[1]<- "dataset"
+
+# Merge
+modeledEntropy.tcrA.df <- merge(modeledEntropy.tcrA.ds.df,modeledEntropy.tcrA.nods.df, by=c("dataset","sampleid"), all=TRUE)
+# Merge with sample data
+modeledEntropy.tcrA.df <- merge(modeledEntropy.tcrA.df, samples_all.merged.fix[,c(1,2,10)], by.x = "sampleid", by.y = "run_accession", all.x=TRUE)
+
+# TRB
+#ds
+modeledEntropy.tcrB.ds <-sapply(datasets[1:10], function(x) immdata.apd1.proc.TcrB.divEst[[x]]$diversityEst$modEntr.ds, simplify = FALSE)
+modeledEntropy.tcrB.ds.df <-ldply(modeledEntropy.tcrB.ds)
+colnames(modeledEntropy.tcrB.ds.df)[1]<- "dataset"
+
+#no ds
+modeledEntropy.tcrB.nods <-sapply(datasets[1:10], function(x) immdata.apd1.proc.TcrB.divEst.noDS[[x]]$diversityEst$modEntr.nods, simplify = FALSE)
+modeledEntropy.tcrB.nods.df <-ldply(modeledEntropy.tcrB.nods)
+colnames(modeledEntropy.tcrB.nods.df)[1]<- "dataset"
+
+# Merge
+modeledEntropy.tcrB.df <- merge(modeledEntropy.tcrB.ds.df,modeledEntropy.tcrB.nods.df, by=c("dataset","sampleid"), all=TRUE)
+# Merge with sample data
+modeledEntropy.tcrB.df <- merge(modeledEntropy.tcrB.df, samples_all.merged.fix[,c(1,2,10)], by.x = "sampleid", by.y = "run_accession", all.x=TRUE)
+
+# IGH
+#ds
+modeledEntropy.igH.ds <-sapply(datasets[1:10], function(x) immdata.apd1.proc.igH.divEst[[x]]$diversityEst$modEntr.ds, simplify = FALSE)
+modeledEntropy.igH.ds.df <-ldply(modeledEntropy.igH.ds)
+colnames(modeledEntropy.igH.ds.df)[1]<- "dataset"
+
+#no ds
+modeledEntropy.igH.nods <-sapply(datasets[1:10], function(x) immdata.apd1.proc.igH.divEst.noDS[[x]]$diversityEst$modEntr.nods, simplify = FALSE)
+modeledEntropy.igH.nods.df <-ldply(modeledEntropy.igH.nods)
+colnames(modeledEntropy.igH.nods.df)[1]<- "dataset"
+
+# Merge
+modeledEntropy.igH.df <- merge(modeledEntropy.igH.ds.df,modeledEntropy.igH.nods.df, by=c("dataset","sampleid"), all=TRUE)
+# Merge with sample data
+modeledEntropy.igH.df <- merge(modeledEntropy.igH.df, samples_all.merged.fix[,c(1,2,10)], by.x = "sampleid", by.y = "run_accession", all.x=TRUE)
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+# TRA
+rplotME <-sapply(datasets[1:10], function(x) plot_CountCloneReads(modeledEntropy.tcrA.df,"Modeled entropy - TCR alpha","Modeled Entropy","dataset",x,yInter = 0,printLabels=FALSE,transformY=FALSE), simplify = FALSE)
+```
+
+### TCRB :Plots of modeled entropy {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+# TRB
+rplotME <-sapply(datasets[1:10], function(x) plot_CountCloneReads(modeledEntropy.tcrB.df,"Modeled entropy - TCR alpha","Modeled Entropy","dataset",x,yInter = 0,printLabels=FALSE,transformY=FALSE), simplify = FALSE)
+```
+
+
+### IGH :Plots of modeled entropy {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+# TRB
+rplotME <-sapply(datasets[1:10], function(x) plot_CountCloneReads(modeledEntropy.igH.df,"Modeled entropy - BCR:IGH","Modeled Entropy","dataset",x,yInter = 0,printLabels=FALSE,transformY=FALSE), simplify = FALSE)
+```
+
+
+## TCR richness - basic manual calculation {.tabset .tabset-fade .tabset-pills}
+
+Calculate TCR richness (based on TCRa and TCRb chains separately) in non-downsampled and downsampled data.
+
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+# TRA, B DOWNSAMPLED
+immdata.apd1.proc.TcrA.divEst <-sapply(datasets[1:10], function(x) get_Richness(immdata.apd1.proc.TcrA.divEst[[x]], colnameEntropy="TCRArichness.ds" ), simplify=FALSE)
+immdata.apd1.proc.TcrB.divEst <-sapply(datasets[1:10], function(x) get_Richness(immdata.apd1.proc.TcrB.divEst[[x]], colnameEntropy="TCRBrichness.ds" ), simplify=FALSE)
+immdata.apd1.proc.igH.divEst <-sapply(datasets[1:10], function(x) get_Richness(immdata.apd1.proc.igH.divEst[[x]], colnameEntropy="BCR.IGHrichness.ds" ), simplify=FALSE)#BCR.IGHrichness.ds
+
+
+```
+
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6, eval=TRUE}
+# TRA, B NOT DOWNSAMPLED
+immdata.apd1.proc.TcrA.divEst.noDS <-sapply(datasets[1:10], function(x) get_Richness(immdata.apd1.proc.TcrA.divEst.noDS[[x]], colnameEntropy="TCRArichness.nods" ), simplify=FALSE)
+immdata.apd1.proc.TcrB.divEst.noDS <-sapply(datasets[1:10], function(x) get_Richness(immdata.apd1.proc.TcrB.divEst.noDS[[x]], colnameEntropy="TCRBrichness.nods"), simplify=FALSE)
+immdata.apd1.proc.igH.divEst.noDS <-sapply(datasets[1:10], function(x) get_Richness(immdata.apd1.proc.igH.divEst.noDS[[x]], colnameEntropy="BCR.IGHrichness.nods"), simplify=FALSE)
+
+```
+
+### TCRA: Plots of richness {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+# TRA
+#ds
+richness.tcrA.ds <-sapply(datasets[1:10], function(x) immdata.apd1.proc.TcrA.divEst[[x]]$diversityEst$TCRArichness.ds, simplify = FALSE)
+richness.tcrA.ds.df <-ldply(richness.tcrA.ds)
+colnames(richness.tcrA.ds.df)[1]<- "dataset"
+
+#no ds
+richness.tcrA.nods <-sapply(datasets[1:10], function(x) immdata.apd1.proc.TcrA.divEst.noDS[[x]]$diversityEst$TCRArichness.nods, simplify = FALSE)
+richness.tcrA.nods.df <-ldply(richness.tcrA.nods)
+colnames(richness.tcrA.nods.df)[1]<- "dataset"
+
+# Merge
+richness.tcrA.df <- merge(richness.tcrA.ds.df,richness.tcrA.nods.df, by=c("dataset","sampleid"), all=TRUE)
+# Merge with sample data
+richness.tcrA.df <- merge(richness.tcrA.df, samples_all.merged.fix[,c(1,2,10)], by.x = "sampleid", by.y = "run_accession", all.x=TRUE)
+
+# TRB
+#ds
+richness.tcrB.ds <-sapply(datasets[1:10], function(x) immdata.apd1.proc.TcrB.divEst[[x]]$diversityEst$TCRBrichness.ds, simplify = FALSE)
+richness.tcrB.ds.df <-ldply(richness.tcrB.ds)
+colnames(richness.tcrB.ds.df)[1]<- "dataset"
+
+#no ds
+richness.tcrB.nods <-sapply(datasets[1:10], function(x) immdata.apd1.proc.TcrB.divEst.noDS[[x]]$diversityEst$TCRBrichness.nods, simplify = FALSE)
+richness.tcrB.nods.df <-ldply(richness.tcrB.nods)
+colnames(richness.tcrB.nods.df)[1]<- "dataset"
+
+# Merge
+richness.tcrB.df <- merge(richness.tcrB.ds.df,richness.tcrB.nods.df, by=c("dataset","sampleid"), all=TRUE)
+# Merge with sample data
+richness.tcrB.df <- merge(richness.tcrB.df, samples_all.merged.fix[,c(1,2,10)], by.x = "sampleid", by.y = "run_accession", all.x=TRUE)
+
+# IGH
+#ds
+richness.igH.ds <-sapply(datasets[1:10], function(x) immdata.apd1.proc.igH.divEst[[x]]$diversityEst$BCR.IGHrichness.ds, simplify = FALSE)
+richness.igH.ds.df <-ldply(richness.igH.ds)
+colnames(richness.igH.ds.df)[1]<- "dataset"
+
+#no ds
+richness.igH.nods <-sapply(datasets[1:10], function(x) immdata.apd1.proc.igH.divEst.noDS[[x]]$diversityEst$BCR.IGHrichness.nods, simplify = FALSE)
+richness.igH.nods.df <-ldply(richness.igH.nods)
+colnames(richness.igH.nods.df)[1]<- "dataset"
+
+# Merge
+richness.igH.df <- merge(richness.igH.ds.df,richness.igH.nods.df, by=c("dataset","sampleid"), all=TRUE)
+# Merge with sample data
+richness.igH.df <- merge(richness.igH.df, samples_all.merged.fix[,c(1,2,10)], by.x = "sampleid", by.y = "run_accession", all.x=TRUE)
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+# TRA
+rplotME <-sapply(datasets[1:10], function(x) plot_CountCloneReads(richness.tcrA.df,"Richness - TCR alpha","Richness","dataset",x,yInter = 0,printLabels=FALSE,transformY=FALSE), simplify = FALSE)
+```
+
+### TCRB: Plots of richness {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+# TRB
+rplotME <-sapply(datasets[1:10], function(x) plot_CountCloneReads(richness.tcrB.df,"Richness - TCR alpha","Richness","dataset",x,yInter = 0,printLabels=FALSE,transformY=FALSE), simplify = FALSE)
+```
+
+
+### BCR-IGH: Plots of richness {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=12}
+# TRB
+rplotME <-sapply(datasets[1:10], function(x) plot_CountCloneReads(richness.igH.df,"Richness - BCR-IGH","Richness","dataset",x,yInter = 0,printLabels=FALSE,transformY=FALSE), simplify = FALSE)
+```
+
+## Comments on downsampled vs downsampled
+
+We have not performed proper downsampling, to a specific number of clones, due technical difficulties arising from extracting TCR and Ig clones from bulk RNA-Seq data (non enriched libraries to begin with). The strategy we followed so far, consists of keeping samples with more than 4 clones (more than 4 TCRalpha, more thatn 4 TCRbeta, more than 4 IGH etc.). So when we compare the richness or modeled entropy between downsampled and non-downsampled data, we see no difference, since for the samples kept, the clone information, clone counts, clones kept, etc have NOT changed.
+
+
+# Boxplots of diversity metrics {.tabset .tabset-fade .tabset-pills}
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6}
+# FOR EACH DATASET The diversityEst object is a list, so we need to unlist that and have it as a dataframe, then
+# we need to merge that with the metadata object which is already a dataframe.
+
+# After that we will merge all the datasets, concatenate their dataframes.
+
+# TCRA
+immdata.apd1.proc.TcrA.divEst.clean <-sapply(datasets[1:10], function(x) extractReduce_diversityDF(x, immdata.apd1.proc.TcrA.divEst[[x]]), simplify = FALSE)
+immdata.apd1.proc.TcrA.divEst.noDS.clean <-sapply(datasets[1:10], function(x) extractReduce_diversityDF(x, immdata.apd1.proc.TcrA.divEst.noDS[[x]]), simplify = FALSE)
+
+# TCRB
+immdata.apd1.proc.TcrB.divEst.clean <-sapply(datasets[1:10], function(x) extractReduce_diversityDF(x, immdata.apd1.proc.TcrB.divEst[[x]]), simplify = FALSE)
+immdata.apd1.proc.TcrB.divEst.noDS.clean <-sapply(datasets[1:10], function(x) extractReduce_diversityDF(x, immdata.apd1.proc.TcrB.divEst.noDS[[x]]), simplify = FALSE)
+
+# IGH
+immdata.apd1.proc.igH.divEst.clean <-sapply(datasets[1:10], function(x) extractReduce_diversityDF(x, immdata.apd1.proc.igH.divEst[[x]]), simplify = FALSE)
+immdata.apd1.proc.igH.divEst.noDS.clean <-sapply(datasets[1:10], function(x) extractReduce_diversityDF(x, immdata.apd1.proc.igH.divEst.noDS[[x]]), simplify = FALSE)
+
+
+# NOW MERGING ALL DATASETS TOGETHER
+
+immdata.apd1.proc.TcrA.divEst.fin <-ldply(immdata.apd1.proc.TcrA.divEst.clean,.id = NULL)
+immdata.apd1.proc.TcrA.divEst.noDS.fin <-ldply(immdata.apd1.proc.TcrA.divEst.noDS.clean,.id = NULL)
+
+immdata.apd1.proc.TcrB.divEst.fin <-ldply(immdata.apd1.proc.TcrB.divEst.clean,.id = NULL)
+immdata.apd1.proc.TcrB.divEst.noDS.fin <-ldply(immdata.apd1.proc.TcrB.divEst.noDS.clean,.id = NULL)
+
+immdata.apd1.proc.igH.divEst.fin <-ldply(immdata.apd1.proc.igH.divEst.clean,.id = NULL)
+immdata.apd1.proc.igH.divEst.noDS.fin <-ldply(immdata.apd1.proc.igH.divEst.noDS.clean,.id = NULL)
+
+# Filter for q=1
+immdata.apd1.proc.TcrA.divEst.fin <-immdata.apd1.proc.TcrA.divEst.fin %>% dplyr::filter(Q.hill ==1) %>% droplevels()
+immdata.apd1.proc.TcrA.divEst.noDS.fin <-immdata.apd1.proc.TcrA.divEst.noDS.fin %>% dplyr::filter(Q.hill ==1) %>% droplevels()
+
+immdata.apd1.proc.TcrB.divEst.fin <-immdata.apd1.proc.TcrB.divEst.fin %>% dplyr::filter(Q.hill ==1) %>% droplevels()
+immdata.apd1.proc.TcrB.divEst.noDS.fin <-immdata.apd1.proc.TcrB.divEst.noDS.fin %>% dplyr::filter(Q.hill ==1) %>% droplevels()
+
+
+immdata.apd1.proc.igH.divEst.fin <-immdata.apd1.proc.igH.divEst.fin %>% dplyr::filter(Q.hill ==1) %>% droplevels()
+immdata.apd1.proc.igH.divEst.noDS.fin <-immdata.apd1.proc.igH.divEst.noDS.fin %>% dplyr::filter(Q.hill ==1) %>% droplevels()
+
+# ## Manually curated
+# 
+# tcrSamTableMerged.red <- tcrSamTableMerged %>% select(-cloneId,-allVHitsWithScore,-nSeqCDR3, -aaSeqCDR3,- chain,-cloneCount,-cloneFraction,-dominant,-dominantMetric,-pcTotTCR,-pcTotTCRchain,-pcTotReads) %>% distinct()
+```
+
+
+# Immunarch data=minimum 4 clones{.tabset .tabset-fade .tabset-pills}
+
+## TCRA{.tabset .tabset-fade .tabset-pills}
+
+### Modeled Entropy
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6}
+immdata.apd1.proc.TcrA.divEst.fin$response <-factor(immdata.apd1.proc.TcrA.divEst.fin$response, levels =c("CR+PR","PD","MR","SD","UNK","NE" ) )
+immdata.apd1.proc.TcrA.divEst.fin$gender <-factor(immdata.apd1.proc.TcrA.divEst.fin$gender, levels =c("F","M" ) )
+immdata.apd1.proc.TcrA.divEst.fin[["response_gender"]] <- interaction(immdata.apd1.proc.TcrA.divEst.fin$response,
+                                                                      immdata.apd1.proc.TcrA.divEst.fin$gender,sep = ":")
+
+immdata.apd1.proc.TcrA.divEst.fin[["response_gender"]] <- factor(immdata.apd1.proc.TcrA.divEst.fin[["response_gender"]],
+                                                                 levels = c("CR+PR:F","CR+PR:M","PD:F","PD:M","SD:F","SD:M","MR:F","MR:M",
+                                                                            "UNK:F","UNK:M","NE:F","NE:M"))
+
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "response","modEntr.ds",groupVar=NULL, facetVar ="dataset","","response", "Modeled TCR alpha entropy")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "response_gender","modEntr.ds",groupVar=NULL, facetVar ="dataset","","response_gender", "Modeled TCR alpha entropy")
+```
+
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "response","modEntr.ds",groupVar=NULL, facetVar ="tissue","","response", "Modeled TCR alpha entropy")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "response_gender","modEntr.ds",groupVar=NULL, facetVar ="tissue","","response_gender", "Modeled TCR alpha entropy")
+```
+
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6, eval = FALSE}
+immdata.apd1.proc.TcrA.divEst.fin$group <- paste(immdata.apd1.proc.TcrA.divEst.fin$response,"-",immdata.apd1.proc.TcrA.divEst.fin$gender)
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "group","modEntr.ds",groupVar=NULL, facetVar ="dataset","","response", "Modeled TCR alpha entropy")
+
+
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "response","modEntr.ds",groupVar=NULL, facetVar ="dataset","","response", "Modeled TCR alpha entropy")
+```
+
+### TCR alpha richness
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "response","TCRArichness.ds",groupVar=NULL, facetVar ="dataset","","response", "TCR alpha richness")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "response","TCRArichness.ds",groupVar=NULL, facetVar ="tissue","","response", "TCR alpha richness")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrA.divEst.fin, "response_gender","TCRArichness.ds",groupVar=NULL, facetVar ="tissue","","response_gender", "TCR alpha richness")
+```
+
+## TCRB{.tabset .tabset-fade .tabset-pills}
+
+### Modeled Entropy
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrB.divEst.fin, "response","modEntr.ds",groupVar=NULL, facetVar ="dataset","","response", "Modeled TCR beta entropy")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrB.divEst.fin, "response","modEntr.ds",groupVar=NULL, facetVar ="tissue","","response", "Modeled TCR beta entropy")
+```
+
+### TCR beta richness
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrB.divEst.fin, "response","TCRBrichness.ds",groupVar=NULL, facetVar ="dataset","","response", "TCR beta richness")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.TcrB.divEst.fin, "response","TCRBrichness.ds",groupVar=NULL, facetVar ="tissue","","response", "TCR beta richness")
+```
+
+
+## BCR-IGH{.tabset .tabset-fade .tabset-pills}
+
+### Modeled Entropy
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.igH.divEst.fin, "response","modEntr.ds",groupVar=NULL, facetVar ="dataset","","response", "Modeled BCR:IGH entropy")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.igH.divEst.fin, "response","modEntr.ds",groupVar=NULL, facetVar ="tissue","","response", "Modeled BCR:IGH entropy")
+```
+
+### BCR:IGH richness
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.igH.divEst.fin, "response","BCR.IGHrichness.ds",groupVar=NULL, facetVar ="dataset","","response", "BCR:IGH richness")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.igH.divEst.fin, "response","BCR.IGHrichness.ds",groupVar=NULL, facetVar ="tissue","","response", "BCR:IGH richness")
+```
+
+
+### BCR:IGH True Diversity
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.igH.divEst.fin, "response","Value.trueDiv",groupVar=NULL, facetVar ="dataset","","response", "BCR:IGH richness")
+```
+
+```{r,warning=F, message=F,fig.show = 'hold', fig.width=8, fig.height=6}
+
+compareBox(immdata.apd1.proc.igH.divEst.fin, "response","Value.trueDiv",groupVar=NULL, facetVar ="tissue","","response", "BCR:IGH richness")
+```
+
+# Save data
+
+
+```{r,warning=F, message=F, results=F, echo=F,fig.show = 'hold', fig.width=8, fig.height=6}
+## DOWNSAMPLING
+# TCRA
+save(immdata.apd1.proc.TcrA.divEst,file=paste0(antiPDL1publicIntermediateData,"tcrAclones_downSampled.divEst.aPD1.FINALmin4.v1",Rdata.suffix))
+# TCRB
+save(immdata.apd1.proc.TcrB.divEst,file=paste0(antiPDL1publicIntermediateData,"tcrBclones_downSampled.divEst.aPD1.FINALmin4.v1",Rdata.suffix))
+save(immdata.apd1.proc.igH.divEst,file=paste0(antiPDL1publicIntermediateData,"igHclones_downSampled.divEst.aPD1.FINALmin10.v1",Rdata.suffix))
+
+## NO DOWNSAMPLING
+# TCRA
+save(immdata.apd1.proc.TcrA.divEst.noDS,file=paste0(antiPDL1publicIntermediateData,"tcrAclones_NOTdownSampled.divEst.aPD1.FINALmin1.v1",Rdata.suffix))
+# TCRB
+save(immdata.apd1.proc.TcrB.divEst.noDS,file=paste0(antiPDL1publicIntermediateData,"tcrBclones_NOTdownSampled.divEst.aPD1.FINALmin1.v1",Rdata.suffix))
+save(immdata.apd1.proc.igH.divEst.noDS,file=paste0(antiPDL1publicIntermediateData,"igHclones_NOTdownSampled.divEst.aPD1.FINALmin1.v1",Rdata.suffix))
+
+```
+
+# Session
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"B_02_aPD1_TCR_BCR_clones_analysis.txt"))
+
+sessionInfo()
+
+```

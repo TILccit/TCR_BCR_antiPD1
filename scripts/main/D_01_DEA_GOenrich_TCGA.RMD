@@ -1,0 +1,389 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center> Uni and Multivariate survival analysis for anti-PD(L)1 public and restricted data </center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 9 October 2019. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 6
+    number_sections: true
+    #df_print: paged
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1', progress=FALSE)
+unlink("scripts/main/D_01_DEA_GOenrich_TCGA_cache", recursive = TRUE)
+```
+
+
+```{r,warning=F, message=F}
+# ## Clear R-workspace
+# rm(list=ls(all=TRUE))
+# setwd()
+## Close all graphic devices
+graphics.off()
+#####################
+### Load packages ###
+#####################
+library(pacman)
+
+pacman::p_load(extrafont,DT,dplyr,DESeq2,tximport,readr,stringr,plyr,tibble,
+               tidyverse,data.table,limma,openxlsx, readxl, clusterProfiler, AnnotationDbi,org.Hs.eg.db)
+
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+# rootDir<-'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1/'
+
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsMainPath<- paste0(scriptsPath, "main/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+# antiPDL1publicInputData <- paste0(projectDataPath,"antiPD(L)1_public/")
+# otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+htseqCounts_Path <-paste0(tcgaInputData, "htseq_vst")
+# Output
+projectOutDataPath <- paste0("output/data_files/")
+# Intermediate output
+tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+# Output for differential expression analysis and gene ontology (similarity)
+DEA_GOoutData <- paste0(projectOutDataPath,"DEA_GO/")
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+
+######################################
+## Create intermediate output paths ##
+######################################
+if (!dir.exists(DEA_GOoutData)) {dir.create(DEA_GOoutData)}
+
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"DEA_GOenrich_TCGA_functions.R"), local = T)
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+
+```
+
+# Data load
+## Reference data
+
+```{r,warning=F, message=F}
+# transct_to_gene <- read.table(paste0(referenceInputData,"tx2gene_Hg38_id_symb.txt"), header = TRUE, sep = "\t" )
+# tx2gene <- transct_to_gene[,c("TXNAME","GENESYMB")]
+# Gene ids to symbols
+geneid2symb <- read.table(file.path(paste0(referenceInputData, "genID2name.csv")), header = TRUE, sep = ",")
+geneid2symb$gene_id <- as.character(geneid2symb$gene_id)
+geneid2symb$gene_name <- as.character(geneid2symb$gene_name)
+
+# ## Load exonic gene sizes that assist with FPKM normalization process
+# load(paste0(referenceInputData,"exonic.gene.sizes.RData"))
+# exonic.gene.sizes2$gene_name <- geneid2symb$gene_name[match(exonic.gene.sizes2$gene,geneid2symb$gene_id)]
+```
+
+## Clinical metadata 
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hide', eval=TRUE}
+tcgaData.tp <- loadRData(paste0(tcgaIntermediateData, "tcga.tp.Filt.final",Rdata.suffix)) %>% as.data.frame()
+tcga.drug.ici.To.Exclude2 <- loadRData(paste0(tcgaIntermediateData, "tcga_patientsNOTici_toEXCLUDE_4Tissues.RData"))
+
+```
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hide', eval=TRUE}
+table(tcgaData.tp$project)
+# Remove patients that received aPD1 immunotherapy.
+tcgaData.tp.clean <- tcgaData.tp %>% dplyr::filter(bcr_patient_barcode %notin% tcga.drug.ici.To.Exclude2) %>% 
+  droplevels() %>% 
+  distinct()
+dim(tcgaData.tp)
+
+# subset to columns
+featuresSelected <- c("bcr_patient_barcode", "project","PD_L1","logTMB","BCR_Richness","TCR_Richness",
+                      "B_cells.CIBER", "T_Cells_CD8.CIBER", "CD4cells.CIBER","TIS_sigscore", "TumorPurity","age_at_initial_pathologic_diagnosis","gender")
+
+## FOR TP data
+tcgaData.tp.sub <- tcgaData.tp.clean %>% dplyr::select(all_of(featuresSelected)) %>% droplevels() %>% distinct()
+colnames(tcgaData.tp.sub)[7:9] <- gsub(".CIBER","",colnames(tcgaData.tp.sub)[7:9])
+colnames(tcgaData.tp.sub)[8] <- "CD8cells"
+# Keep rows where at least on of the features of interested is not NA
+tcgaData.tp.sub <-tcgaData.tp.sub[rowSums(is.na(tcgaData.tp.sub[,3:11])) != 9,]
+# tcgaData.tp.sub.extra <-tcgaData.tp.sub.extra[rowSums(is.na(tcgaData.tp.sub.extra[,3:11])) != 9,]
+dim(tcgaData.tp.sub)
+
+mycancertypes <- levels(as.factor(tcgaData.tp.sub$project))
+## Exclude THYM and DLBC
+mycancertypes.reduced <- mycancertypes[-which(mycancertypes %in% c("THYM", "DLBC","COAD_MSI_low","BRCA_Her2","BRCA_LuminalA", "BRCA_LuminalB","BRCA","BRCA_Normal","COAD","UCEC","LAML"))]
+length(mycancertypes.reduced)
+
+
+```
+
+
+# BCR high vs BCR low samples{.tabset .tabset-fade .tabset-pills}
+
+Set parameters for DEA.
+```{r,warning=F, message=F, eval=TRUE}
+origCol <- "BCR.IGHrichness.ds"
+newCol <- "BCR"
+newCol.un <- newCol
+suffix <- paste0("_",newCol)
+biomTitle <- "BCR high vs BCR low"
+tcgaOrigCol <- "BCR_Richness"
+```
+
+
+## Load counts & save gene background
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hide', eval=TRUE}
+skcm <-loadTCGAcounts("SKCM", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+blca <-loadTCGAcounts("BLCA", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+kirc <-loadTCGAcounts("KIRC", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+stad <-loadTCGAcounts("STAD", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+
+skcm_genes<-rownames(skcm$counts)
+blca_genes <- rownames(blca$counts)
+kirc_genes <- rownames(kirc$counts)
+stad_genes <- rownames(stad$counts)
+
+```
+
+
+## Final DEGs
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hide', eval=TRUE}
+
+# Find DEGs in TCGA
+findDEGs(skcm$counts,coldataDF = skcm$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("SKCM.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(blca$counts,coldataDF = blca$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("BLCA.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(kirc$counts,coldataDF = kirc$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("KIRC.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(stad$counts,coldataDF = stad$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("STAD.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+
+```
+
+## GO enrichment
+
+Load DEGs
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+## MELANOMA
+skcm.res = get_geneLists(DEA_GOoutData,paste0("SKCM.Degs.dataset_lfc0",suffix), lfcThres=0)
+## RCC
+kirc.res = get_geneLists(DEA_GOoutData,paste0("KIRC.Degs.dataset_lfc0",suffix), lfcThres=0)
+## BLADDER
+blca.res = get_geneLists(DEA_GOoutData,paste0("BLCA.Degs.dataset_lfc0",suffix), lfcThres=0)
+## GASTRIC
+stad.res = get_geneLists(DEA_GOoutData,paste0("STAD.Degs.dataset_lfc0",suffix), lfcThres=0)
+
+## All together
+
+go.all <- sapply(list("SKCM"=skcm.res,"KIRC"=kirc.res,"BLCA" = blca.res, "STAD" = stad.res), function(x) x[[3]], simplify = FALSE )
+go.all.DF <- ldply(go.all)
+go.all.DF.up <- go.all.DF %>% dplyr::filter(group=="upregulated")
+
+```
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+
+bp <- sapply(go.all, function(x) enrichGO(x$gene, ont="BP", OrgDb = 'org.Hs.eg.db',keyType = "SYMBOL",pAdjustMethod = "BH", universe=skcm_genes,
+                            pvalueCutoff  = 0.05,
+                            qvalueCutoff = 0.05,minGSSize=5), simplify = FALSE)
+save(bp,file=paste0(DEA_GOoutData,"bpGO_allTCGA_res",suffix,Rdata.suffix))
+
+```
+
+# CD8+ T cells infiltration high vs low samples{.tabset .tabset-fade .tabset-pills}
+
+Set parameters for DEA.
+
+```{r,warning=F, message=F, eval=TRUE}
+origCol <- "CD8cells"
+newCol <- "CD8"
+newCol.un <- newCol
+suffix <- paste0("_",newCol)
+biomTitle <- "CD8+ T cells high vs CD8+ T cells low"
+tcgaOrigCol <- "CD8cells"
+```
+
+
+## Load counts & save gene background
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hide', eval=TRUE}
+skcm <-loadTCGAcounts("SKCM", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+blca <-loadTCGAcounts("BLCA", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+kirc <-loadTCGAcounts("KIRC", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+stad <-loadTCGAcounts("STAD", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+
+skcm_genes<-rownames(skcm$counts)
+blca_genes <- rownames(blca$counts)
+kirc_genes <- rownames(kirc$counts)
+stad_genes <- rownames(stad$counts)
+```
+
+## Final DEGs
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hide', eval=TRUE}
+
+# Find DEGs in TCGA
+findDEGs(skcm$counts,coldataDF = skcm$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("SKCM.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(blca$counts,coldataDF = blca$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("BLCA.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(kirc$counts,coldataDF = kirc$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("KIRC.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(stad$counts,coldataDF = stad$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("STAD.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+
+```
+
+## GO enrichment
+
+Load DEGs
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+## MELANOMA
+skcm.res = get_geneLists(DEA_GOoutData,paste0("SKCM.Degs.dataset_lfc0",suffix), lfcThres=0)
+## RCC
+kirc.res = get_geneLists(DEA_GOoutData,paste0("KIRC.Degs.dataset_lfc0",suffix), lfcThres=0)
+## BLADDER
+blca.res = get_geneLists(DEA_GOoutData,paste0("BLCA.Degs.dataset_lfc0",suffix), lfcThres=0)
+## GASTRIC
+stad.res = get_geneLists(DEA_GOoutData,paste0("STAD.Degs.dataset_lfc0",suffix), lfcThres=0)
+
+## All together
+
+go.all <- sapply(list("SKCM"=skcm.res,"KIRC"=kirc.res,"BLCA" = blca.res, "STAD" = stad.res), function(x) x[[3]], simplify = FALSE )
+go.all.DF <- ldply(go.all)
+go.all.DF.up <- go.all.DF %>% dplyr::filter(group=="upregulated")
+
+```
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+
+bp <- sapply(go.all, function(x) enrichGO(x$gene, ont="BP", OrgDb = 'org.Hs.eg.db',keyType = "SYMBOL",pAdjustMethod = "BH", universe=skcm_genes,
+                            pvalueCutoff  = 0.05,
+                            qvalueCutoff = 0.05,minGSSize=5), simplify = FALSE)
+save(bp,file=paste0(DEA_GOoutData,"bpGO_allTCGA_res",suffix,Rdata.suffix))
+
+```
+
+# PDL-1 expression high vs low samples{.tabset .tabset-fade .tabset-pills}
+
+Set parameters for DEA.
+
+
+```{r,warning=F, message=F, eval=TRUE}
+origCol <- "PDL1"
+newCol <- "PD1L1"
+newCol.un <- newCol
+suffix <- paste0("_",newCol)
+biomTitle <- "PDL1 high vs PDL1 low"
+tcgaOrigCol <- "PD_L1"
+```
+
+
+
+## Load counts & save gene background
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hide', eval=TRUE}
+skcm <-loadTCGAcounts("SKCM", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+blca <-loadTCGAcounts("BLCA", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+kirc <-loadTCGAcounts("KIRC", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+stad <-loadTCGAcounts("STAD", htseqCounts_Path,dataDF = tcgaData.tp.sub, filterVar = "project", sampleBarcode = "bcr_patient_barcode", biomarker=tcgaOrigCol, biomarkerName = newCol,geneid2symb)
+
+skcm_genes<-rownames(skcm$counts)
+blca_genes <- rownames(blca$counts)
+kirc_genes <- rownames(kirc$counts)
+stad_genes <- rownames(stad$counts)
+```
+
+## Final DEGs
+
+```{r,warning=F, message=F, fig.width=12, fig.height=20,fig.show = 'hide', eval=TRUE}
+
+# Find DEGs in TCGA
+findDEGs(skcm$counts,coldataDF = skcm$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("SKCM.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(blca$counts,coldataDF = blca$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("BLCA.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(kirc$counts,coldataDF = kirc$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("KIRC.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+findDEGs(stad$counts,coldataDF = stad$coldata,condA="low",condB="high",plotTitle=biomTitle,
+         lfcThres = 0,padjThres=0.05,fileName=paste0("STAD.Degs.dataset_lfc0",suffix),degCol=newCol,controlDataset=FALSE,tcga = TRUE,outpath= DEA_GOoutData)
+
+```
+
+## GO enrichment
+
+Load DEGs
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+## MELANOMA
+skcm.res = get_geneLists(DEA_GOoutData,paste0("SKCM.Degs.dataset_lfc0",suffix), lfcThres=0)
+## RCC
+kirc.res = get_geneLists(DEA_GOoutData,paste0("KIRC.Degs.dataset_lfc0",suffix), lfcThres=0)
+## BLADDER
+blca.res = get_geneLists(DEA_GOoutData,paste0("BLCA.Degs.dataset_lfc0",suffix), lfcThres=0)
+## GASTRIC
+stad.res = get_geneLists(DEA_GOoutData,paste0("STAD.Degs.dataset_lfc0",suffix), lfcThres=0)
+
+## All together
+
+go.all <- sapply(list("SKCM"=skcm.res,"KIRC"=kirc.res,"BLCA" = blca.res, "STAD" = stad.res), function(x) x[[3]], simplify = FALSE )
+go.all.DF <- ldply(go.all)
+go.all.DF.up <- go.all.DF %>% dplyr::filter(group=="upregulated")
+
+
+```
+
+```{r,warning=F, message=F, fig.width=8, fig.height=16,fig.show = 'hold', eval=TRUE}
+
+bp <- sapply(go.all, function(x) enrichGO(x$gene, ont="BP", OrgDb = 'org.Hs.eg.db',keyType = "SYMBOL",pAdjustMethod = "BH", universe=skcm_genes,
+                            pvalueCutoff  = 0.05,
+                            qvalueCutoff = 0.05,minGSSize=5), simplify = FALSE)
+save(bp,file=paste0(DEA_GOoutData,"bpGO_allTCGA_res",suffix,Rdata.suffix))
+
+```
+
+# Session Info
+
+```{r,warning=F, message=F,fig.show = 'hold', out.width = '100%',dev='svg'}
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"D_01_DEA_GOenrich_TCGA.txt"))
+
+sessionInfo()
+```

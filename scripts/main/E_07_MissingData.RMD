@@ -1,0 +1,900 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center> Explore missing data on anti-PD(L)1 public datasets </center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 19 February 2021. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 6
+    number_sections: true
+    #df_print: paged
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1')
+unlink("scripts/main/E_07_MissingData_cache", recursive = TRUE)
+```
+
+```{r,warning=F, message=F}
+## Clear R-workspace
+rm(list=ls(all=TRUE))
+
+## Close all graphic devices
+graphics.off()
+#####################
+### Load packages ###
+#####################
+library(pacman)
+
+pacman::p_load(extrafont,DT,stringr,dplyr,plyr,tibble,tidyverse,data.table, ggplot2,strex,Hmisc,hrbrthemes,
+               ggpubr,mlbench,Amelia,caret, DMwR, DataExplorer,FactoMineR,OutlierDetection,factoextra, parallel,doParallel,scales,precrec,
+               RColorBrewer, pander, rlist,
+               reconPlots,
+               survival,
+               survminer, strex, ggplotify,flextable,ggsci, naniar,viridis,cowplot,ggthemes,dichromat)
+
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+antiPDL1publicInputData <- paste0(projectDataPath,"antiPD(L)1_public/")
+otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+# # Output
+projectOutDataPath <- paste0("output/data_files/")
+# tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+antiPDL1publicIntermediateData <- paste0(projectOutDataPath,"antiPD(L)1_public/")
+
+  
+figuresPath <- paste0("output/figures/")
+# tablesPath <- paste0("output/tables/")
+# modelsPath <- paste0("output/models/")
+
+# # #Intermediate output
+# testDataOut <-paste0(modelsPath,"test_data/")
+# rocCompareOut <-paste0(modelsPath,"roc_compare/")
+# modelsInterm <- paste0(modelsPath,"models_interm_files/")
+
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+##########################
+### FOLDER/FILES NAMES ###
+##########################
+# Create list with folders names for the different datasets.
+datasets <- c("Hugo","Riaz","Gide","Liu","Rod","Miao","Immotion150","Kim","Mari", "Powles","Braun")
+data.foldersList <- as.list(c("Hugo_MEL","Riaz_MEL","Gide_MEL", "Liu_MEL","Rodriguez_MEL","Miao_RCC","Immo150_RCC","Kim_GAS","Mari_BLA","Powles_BLA","Braun_RCC"))
+names(data.foldersList)<- c("Hugo","Riaz","Gide", "Liu","Rod", "Miao","Immotion150","Kim","Mari","Powles","Braun")
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"MissingData_functions.R"), local=T)
+
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+# Other script variables
+# analysis_type <- "_TCRaIGH_noLiu"
+modelTypeA <- "_TCRArichnessIGH.ds"
+modelTypeB <- "_noLIU"
+modelTypeC <- "_mintcr4bcr10"
+
+```
+
+
+
+# Loading Sample and Clone data
+
+We are using the data that were TCRa min 4 clones, BCR igh min 10 clones
+
+```{r dataLoadSamples,warning=F, message=F,eval=TRUE}
+immdata.TcrBcr.full.red <- loadRData(paste0(antiPDL1publicIntermediateData,"immdata.TcrBcr.full.red",modelTypeA,modelTypeB,modelTypeC,".RData"))
+immdata.TcrBcr.full.red$response <- ifelse(immdata.TcrBcr.full.red$response=="CR+PR","CRPR",immdata.TcrBcr.full.red$response)
+
+
+```
+
+
+# Looking at available data
+
+First filtering, to keep only CR, PR, PD samples
+```{r,warning=F, message=F,eval=TRUE}
+## FILTER DATA FOR PD, CR, PR (.sub)
+immdata.TcrBcr.full.red.sub <- immdata.TcrBcr.full.red %>% filter(response %in% c("PD","CRPR")) %>% droplevels()
+
+```
+
+From `r nrow(immdata.TcrBcr.full.red)` samples (that include all responses), we drop down to `r nrow(immdata.TcrBcr.full.red.sub)`, that are CR, PR, PD pre-treatment samples.
+
+
+Looking at how many of the data have TMB info
+
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(immdata.TcrBcr.full.red.sub %>% select(run_accession,response,tissue) %>% group_by(tissue,response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of responders/non-responders in all tissues'
+)
+```
+Looking at how many of the data have TMB info
+
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(immdata.TcrBcr.full.red.sub %>% filter(complete.cases(TMB)) %>% select(run_accession,response,tissue) %>% group_by(tissue,response) %>% dplyr::summarise(no_rows=length(response)), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of responders/non-responders in all tissues that have TMB'
+)
+```
+
+
+From `r nrow(immdata.TcrBcr.full.red.sub)` CRPR, PD samples, we drop down to `r nrow(immdata.TcrBcr.full.red.sub %>% filter(complete.cases(TMB)))`, that are CR, PR, PD pre-treatment samples.
+The only tissues we can actually use for the model are melanoma and bladder, that have more than 100 samples. 
+
+Prepare other variables and dataframes necessary for the analysis.
+
+```{r,warning=F, message=F,eval=TRUE}
+## EXTRACT RESPONSE, NOMINAL, MEASURE VARIABLES FROM DATA
+response.var <- "response"
+nominal.vars <- c("dataset","tissue","gender")
+
+measure.vars <-colnames(immdata.TcrBcr.full.red.sub)[c(2:10,12,32:43)]
+measure.vars <- measure.vars[c(6,22,1:3,20,21,4:5,10,7:9,11:19)]
+
+
+
+## CHECK INFINITE LOG TMB VALUES
+immdata.TcrBcr.full.red.sub[which(is.infinite(immdata.TcrBcr.full.red.sub$logTMB)),]
+
+## Extract tissues in data so far
+tissues <- unique(immdata.TcrBcr.full.red.sub$tissue)
+
+# Keep samples with TMB (.tmb)
+immdata.TcrBcr.full.red.sub.tmb <- immdata.TcrBcr.full.red.sub %>% filter(complete.cases(logTMB)) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb)
+# ONLY MELANOMA, WITH TMB (.tmb.MEL)
+immdata.TcrBcr.full.red.sub.tmb.MEL <- immdata.TcrBcr.full.red.sub.tmb %>% filter(tissue=="melanoma") %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb.MEL)
+## ALL MELANOMA AND BLADDER, WITH TMB (.tmb.ALL)
+immdata.TcrBcr.full.red.sub.tmb.ALL <- immdata.TcrBcr.full.red.sub.tmb %>% filter(tissue %in% c("melanoma","bladder")) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.tmb.ALL)
+# ALL DATA, MELANOMA AND BLADDER, BUT LEAVE MISSING TMB (.ALL)
+immdata.TcrBcr.full.red.sub.ALL <- immdata.TcrBcr.full.red.sub %>% filter(tissue %in% c("melanoma","bladder")) %>% droplevels()#;nrow(immdata.TcrBcr.full.red.sub.ALL)
+
+# Which are the covariates I am considering
+covariatesIn <- measure.vars[c(1:2,4:7,14:16)]
+responseVar <- "response"
+
+## INSTEAD OF FILTERING FOR NO MISSING TMB, I DO THAT FOR ALL COVARIATES OF INTEREST
+# Remove rows that have outliers/missing values since I get errors with Knn imputation
+immdata.TcrBcr.full.red.sub.ALL.filt <- immdata.TcrBcr.full.red.sub.ALL %>% filter_at(vars(covariatesIn), all_vars(complete.cases(.))) %>% droplevels()
+# DOING THE SAME FOR THE ORIGINAL DATA - USE THIS WHEN TESTING
+# these data include other tissues apart from melanoma and bladder
+immdata.TcrBcr.full.red.sub.filt <- immdata.TcrBcr.full.red.sub %>% filter_at(vars(covariatesIn), all_vars(complete.cases(.))) %>% droplevels()
+
+# FINAL DATA FOR MODELLING
+# Remove the Liu dataset for the model testing
+immdata.TcrBcr.BLAD.MEL.ready <-immdata.TcrBcr.full.red.sub.ALL.filt %>% filter(dataset %notin% c("Liu") ) %>% droplevels() # All melanoma & bladder, PD, CR, PR, complete data
+immdata.TcrBcr.ALL.ready <- immdata.TcrBcr.full.red.sub.filt %>% filter(dataset %notin% c("Liu") ) %>% droplevels() # All tissues, PD, CR, PR, complete data
+
+## For gastric
+immdata.TcrBcr.full.red.sub.filt.gastric <- immdata.TcrBcr.full.red.sub %>% filter(tissue %in% c("gastric") ) %>%  
+                                            filter_at(vars(covariatesIn[-6]), all_vars(complete.cases(.))) %>% droplevels()
+```
+
+# Missing data {.tabset .tabset-fade .tabset-pills}
+
+## All together
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+## covariatesIn,"OS","OS.time","age","gender","disease_status"
+factors <- c(covariatesIn,"OS","OS.time","age","gender","disease_status","tissue","dataset")#,"prior_treatment"
+df.full <- immdata.TcrBcr.full.red %>% select(all_of(factors)) %>% droplevels()
+
+df.full$gender <- ifelse(df.full$gender=="",NA,df.full$gender)
+df.full$disease_status <- ifelse(df.full$disease_status=="",NA,
+                                 ifelse(df.full$disease_status=="Unknown",NA,df.full$disease_status))
+
+
+# Are there missing values in the dataset?
+any_na(df.full)
+# How many?
+n_miss(df.full)
+prop_miss(df.full)
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+
+# Which variables are affected?
+df.full %>% is.na() %>% colSums() %>% pander()
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(miss_var_summary(df.full), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'number of missings per variable'
+)
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(miss_var_table(df.full), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Tabulate the missings in the variables'
+)
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+datatable(miss_case_summary(df.full), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'number of missings per participant (n and %)'
+)
+```
+
+
+```{r,warning=F, message=F,eval=TRUE}
+
+datatable(miss_case_table(df.full), extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'number of missings per participant (n and %)'
+)
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+# Get number of missings per participant (n and %)
+gg_miss_var(df.full)
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+vis_miss(df.full) + theme(axis.text.x = element_text(angle=80))
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+gg_miss_upset(df.full)
+```
+
+## Missing in histologies {.tabset .tabset-fade .tabset-pills}
+
+### Melanoma {.tabset .tabset-fade .tabset-pills}
+
+#### ALL
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+# Which variables are affected?
+df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels() %>% is.na() %>% colSums() %>% pander()
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+# Get number of missings per participant (n and %)
+gg_miss_var(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels())
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+vis_miss(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels()) + theme(axis.text.x = element_text(angle=80))
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+gg_miss_upset(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels())
+```
+
+
+#### Datasets {.tabset .tabset-fade .tabset-pills}
+
+
+##### Boxplots
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="disease_status")), simplify = FALSE)
+
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="gender")), simplify = FALSE)
+
+
+```
+
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="age")) + scale_color_viridis(alpha=0.6), simplify = FALSE)
+
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=FALSE,results='asis', fig.width=19, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="prior_treatment")), simplify = FALSE)
+
+
+```
+
+
+
+##### Histograms
+
+
+##### Other
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+df.full.mel <- df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels() %>% group_split(dataset)
+# Which variables are affected?
+
+df.full.mel %>% map(is.na) %>% map(colSums)
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+
+df.full.mel %>% map(gg_miss_var)
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+
+df.full.mel %>% map(vis_miss) #%>% map(theme(axis.text.x = element_text(angle=80)))
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+#df.full.mel %>% map(gg_miss_upset)
+```
+
+
+
+### Bladder {.tabset .tabset-fade .tabset-pills}
+
+#### ALL
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+# Which variables are affected?
+df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels() %>% is.na() %>% colSums()  %>% pander()
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+# Get number of missings per participant (n and %)
+gg_miss_var(df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels())
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+vis_miss(df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels()) + theme(axis.text.x = element_text(angle=80))
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+gg_miss_upset(df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels())
+```
+
+
+#### Datasets {.tabset .tabset-fade .tabset-pills}
+
+##### Boxplots
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot(), simplify = FALSE)
+
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="gender")), simplify = FALSE)
+
+
+```
+
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="age")) + scale_color_viridis(alpha=0.6), simplify = FALSE)
+
+
+```
+
+##### Histograms
+
+##### Other
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+df.full.blad <- df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels() %>% group_split(dataset)
+# Which variables are affected?
+
+
+df.full.blad %>% map(is.na) %>% map(colSums) 
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+
+df.full.blad %>% map(gg_miss_var)
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+
+df.full.blad %>% map(vis_miss) #%>% map(theme(axis.text.x = element_text(angle=80)))
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+df.full.blad %>% map(gg_miss_upset)
+```
+
+### RCC {.tabset .tabset-fade .tabset-pills}
+
+#### ALL
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+# Which variables are affected?
+df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels() %>% is.na() %>% colSums()  %>% pander()
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+# Get number of missings per participant (n and %)
+gg_miss_var(df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels())
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+vis_miss(df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels()) + theme(axis.text.x = element_text(angle=80))
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+gg_miss_upset(df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels())
+```
+
+
+#### Datasets {.tabset .tabset-fade .tabset-pills}
+
+##### Boxplots
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot(), simplify = FALSE)
+
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="gender")), simplify = FALSE)
+
+
+```
+
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="age")) + scale_color_viridis(alpha=0.6), simplify = FALSE)
+
+
+```
+
+##### Histograms
+
+##### Other
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+df.full.rcc <- df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels() %>% group_split(dataset)
+# Which variables are affected?
+
+
+df.full.rcc %>% map(is.na) %>% map(colSums) 
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+
+df.full.rcc %>% map(gg_miss_var)
+
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+
+df.full.rcc %>% map(vis_miss) #%>% map(theme(axis.text.x = element_text(angle=80)))
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+df.full.rcc %>% map(gg_miss_upset)
+```
+
+
+### Gastric {.tabset .tabset-fade .tabset-pills}
+
+#### Boxplots 
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="gastric") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot(), simplify = FALSE)
+
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="gastric") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="gender")), simplify = FALSE)
+
+
+```
+
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+sapply(colnames(df.full)[1:9], function(x) ggplot(df.full  %>% dplyr::filter(tissue=="gastric") %>% droplevels(), aes_string(x = "dataset", y = x)) + geom_boxplot() + geom_jitter(size=0.9, alpha=0.9,aes_string(x = "dataset", y = x, color="age")) + scale_color_viridis(alpha=0.6), simplify = FALSE)
+
+
+```
+
+#### Histograms
+
+#### Other
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=6}
+# Which variables are affected?
+df.full  %>% dplyr::filter(tissue=="gastric") %>% droplevels() %>% is.na() %>% colSums()  %>% pander()
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+# Get number of missings per participant (n and %)
+gg_miss_var(df.full  %>% dplyr::filter(tissue=="gastric") %>% droplevels())
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+vis_miss(df.full  %>% dplyr::filter(tissue=="gastric") %>% droplevels()) + theme(axis.text.x = element_text(angle=80))
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=10, fig.height=8}
+#gg_miss_upset(df.full  %>% dplyr::filter(tissue=="gastric") %>% droplevels())
+```
+
+# Melanoma & age/gender/disease status
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes(x = factor(dataset), y = age)) + geom_boxplot()
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+# ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes(x = factor(dataset), y = gender)) + geom_bar()
+
+df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels() %>%
+  group_by(dataset) %>%
+  dplyr::count(gender) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = dataset, y = prop, fill = gender)) +
+    geom_bar(stat = "identity") #+
+    #coord_flip() 
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+# ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes(x = factor(dataset), y = gender)) + geom_bar()
+
+df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels() %>%
+  group_by(dataset) %>%
+  dplyr::count(disease_status) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = dataset, y = prop, fill = disease_status)) +
+    geom_bar(stat = "identity") #+
+    #coord_flip() 
+```
+
+# Bladder & age/gender/disease status
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+# ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes(x = factor(dataset), y = gender)) + geom_bar()
+
+df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels() %>%
+  group_by(dataset) %>%
+  dplyr::count(gender) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = dataset, y = prop, fill = gender)) +
+    geom_bar(stat = "identity") #+
+    #coord_flip() 
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+# ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes(x = factor(dataset), y = gender)) + geom_bar()
+
+df.full  %>% dplyr::filter(tissue=="bladder") %>% droplevels() %>%
+  group_by(dataset) %>%
+  dplyr::count(disease_status) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = dataset, y = prop, fill = disease_status)) +
+    geom_bar(stat = "identity") #+
+    #coord_flip() 
+```
+
+# RCC & age/gender/disease status
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+ggplot(df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels(), aes(x = factor(dataset), y = age)) + geom_boxplot()
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+# ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes(x = factor(dataset), y = gender)) + geom_bar()
+
+df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels() %>%
+  group_by(dataset) %>%
+  dplyr::count(gender) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = dataset, y = prop, fill = gender)) +
+    geom_bar(stat = "identity") #+
+    #coord_flip() 
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+# ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes(x = factor(dataset), y = gender)) + geom_bar()
+
+df.full  %>% dplyr::filter(tissue=="RCC") %>% droplevels() %>%
+  group_by(dataset) %>%
+  dplyr::count(disease_status) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = dataset, y = prop, fill = disease_status)) +
+    geom_bar(stat = "identity") #+
+    #coord_flip() 
+```
+
+
+# Calculate Number of events for each histology, numbe rof covariates etc.
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+# ggplot(df.full  %>% dplyr::filter(tissue=="melanoma") %>% droplevels(), aes(x = factor(dataset), y = gender)) + geom_bar()
+test <-df.full  %>% group_split(tissue)
+
+ir <- df.full %>%
+  group_by(tissue)
+group_keys(ir)
+names(test) <-group_keys(ir) %>% pull(tissue)
+# unique(df.full$tissue)
+# df.full  %>% group_split(tissue) %>% map(dplyr::count(OS))
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+events <-sapply(test, function(x)  x %>% dplyr::count(OS) %>% filter(OS==1) %>% pull(n))
+names(events) <-group_keys(ir) %>% pull(tissue)
+pander(events)
+```
+
+Now to get a number on how many events per covariate:
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+# Divide by the minimum of covariates
+pander(events/9)
+```
+
+Check also how many events and cencored
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+df.full %>%
+  group_by(tissue) %>%
+  dplyr::count(OS) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = tissue, y = prop, fill = OS)) +
+    geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle=45))
+```
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=6, fig.height=6}
+
+df.full %>%
+  group_by(dataset) %>%
+  dplyr::count(OS) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = dataset, y = prop, fill = OS)) +
+    geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle=45))
+
+
+```
+
+# Imputation (can we?) {.tabset .tabset-fade .tabset-pills}
+
+Even if we find that MAR is covered (per histology), we still have a problem imputing missing values across different datasets that make up the tissue cohorts. We are using multicenter data, data coming from different trials and the bias can be much more from what we see.
+
+What is missing from where:
+
+## *Melanoma*
+
+***
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='hide', fig.width=18, fig.height=10,fig.show='hide'}
+myTheme <- theme_ipsum(base_family = "Palatino Linotype", base_size = 13) + 
+            theme(#panel.grid.major = element_blank(),
+                 #panel.grid.minor = element_blank(),
+                axis.text.x = element_text(size = 13),
+                 axis.title.x = element_text(size=14, face="bold"),
+                axis.title.y = element_text(size=14, face="bold"),
+                 axis.text.y = element_text(size = 13),
+                 panel.background = element_blank(),
+                 axis.line = element_line(colour = "black"),
+                legend.title=element_text(size=20))
+colnames(df.full)[c(1:13)] <- c("TCR Richness", "BCR Richness", "TIS GEP", "PD-L1", "Tumor Purity", "logTMB", 
+                                "B cells infiltration", "CD8+ T-cells infiltration", "CD4+ T-cells infiltration",
+                                "OS", "OS.time","Age","Gender")
+positions <- df.full %>% dplyr::filter(tissue=="melanoma") %>% dplyr::filter(dataset=="Riaz") %>% dplyr::select(-disease_status,-tissue,-dataset) %>% droplevels() %>% colnames() %>% rev();positions
+
+misPlots<-sapply(c("Riaz","Hugo","Gide","Liu","Rod"), function(x) plot_missing(df.full %>% dplyr::filter(tissue=="melanoma") %>% dplyr::filter(dataset==x) %>% dplyr::select(-disease_status,-tissue,-dataset) %>% droplevels(),ggtheme=myTheme, geom_label_args = list(hjust = +.7,nudge_y = .1))+ scale_fill_manual(name="Band", values = list("Good" = "#ADB17DFF", "OK" = "#FFB547FF", "Bad" = "#D6D6CEFF", "Remove" = "#800000FF") ,guide  = guide_legend(), drop = F)+ scale_x_discrete(limits = positions) , simplify = FALSE)
+
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=22, fig.height=14}
+
+melMis <-ggarrange(plotlist=misPlots, common.legend = TRUE,legend="none", labels=c("Riaz et al.","Hugo et al.","Gide et al.","Liu et al.","Rodriguez et al."),font.label = list(size = 15, color = "black", face = "bold", family = "Palatino Linotype")
+)
+melMis
+```
+
+
+* **logTMB** is missing completely from **Gide and Rodriguez** datasets
+* Some **OS.time** data missing from **Hugo**
+* **age** is missing completely from **Liu**
+* **Riaz** is missing some **TMB, age and gender** data
+* **Rodriguez** is missing also one **OS.time**
+
+## *Bladder*
+
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='hide', fig.width=18, fig.height=10,fig.show='hide'}
+
+misPlots<-sapply(c("Mari","Powles"), function(x) plot_missing(df.full %>% dplyr::filter(tissue=="bladder") %>% dplyr::filter(dataset==x) %>% dplyr::select(-disease_status,-tissue) %>% droplevels(),ggtheme=myTheme, geom_label_args = list(hjust = +.7,nudge_y = -0.1))+ scale_fill_manual("Band", values = list("Good" = "#ADB17DFF", "OK" = "#FFB547FF", "Bad" = "#D6D6CEFF", "Remove" = "#800000FF"),guide  = guide_legend(), drop = F) + scale_x_discrete(limits = positions), simplify = FALSE)
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=18, fig.height=6}
+
+bladMis <- ggarrange(plotlist=misPlots, common.legend = TRUE,legend="none", labels=c("Mariathasan et al.","Powles et al."),font.label = list(size = 15, color = "black", face = "bold", family = "Palatino Linotype"))
+bladMis
+```
+
+* **Powles** does not have **OS** data at all-NOT USED
+* **Powles** does not have **gender** data either
+* **Age** is missing *completely* from the bladder data
+* **Mariathasan** is missing some **TMB** data
+
+
+## *RCC*
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='hide', fig.width=18, fig.height=10,fig.show='hide'}
+
+misPlots<-sapply(c("Immotion150","Miao"), function(x) plot_missing(df.full %>% dplyr::filter(tissue=="RCC") %>% dplyr::filter(dataset==x) %>% dplyr::select(-disease_status,-tissue) %>% droplevels(),ggtheme=myTheme,geom_label_args = list(hjust = +.7,nudge_y = .1)) + scale_fill_manual("Band", values = list("Good" = "#ADB17DFF", "OK" = "#FFB547FF", "Bad" = "#D6D6CEFF", "Remove" = "#800000FF"),guide  = guide_legend(), drop = F)+ scale_x_discrete(limits = positions), simplify = FALSE)
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=14, fig.height=6}
+
+rccMis <-ggarrange(plotlist=misPlots, common.legend = TRUE,legend="none", labels=c("McDermott et al.","Miao et al."),font.label = list(size = 15, color = "black", face = "bold", family = "Palatino Linotype"))
+rccMis
+```
+
+* **Immotion** does not have **OS** at all-NOT USED
+* **Miao** is missing some **TMB** data (around half)
+
+ONE DATASET USED FOR SURVIVAL
+
+
+## *Gastric*
+
+```{r,warning=F, message=F,echo=FALSE, eval=TRUE,results='hide', fig.width=18, fig.height=10,fig.show='hide'}
+
+misPlots<-sapply(c("Kim"), function(x) plot_missing(df.full %>% dplyr::filter(tissue=="gastric") %>% dplyr::filter(dataset==x) %>% dplyr::select(-disease_status,-tissue) %>% droplevels(),ggtheme=myTheme, geom_label_args = list(hjust = +.7,nudge_y = .1)) + scale_fill_manual("Band", values = list("Good" = "#ADB17DFF", "OK" = "#FFB547FF", "Bad" = "#D6D6CEFF", "Remove" = "#800000FF"),guide  = guide_legend(), drop = F)+ scale_x_discrete(limits = positions), simplify = FALSE)
+
+misPlots$Kim$data$Band <- factor(misPlots$Kim$data$Band, levels=c("Good", "OK", "Bad", "Remove"))
+```
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=8, fig.height=6}
+
+gasMis<-ggarrange(plotlist=misPlots, common.legend = TRUE,legend="bottom", labels=c("Kim et al."),font.label = list(size = 15, color = "black", face = "bold", family = "Palatino Linotype"))
+gasMis
+```
+
+* **Gastric** does not have **TMB** data at all
+
+* Conclusion
+
+Imputation is no worth it and not consistently possible for our analyses.
+
+# Supplemental Figure 2
+
+
+```{r,warning=F, message=F,echo=TRUE, eval=TRUE,results='asis', fig.width=22, fig.height=22}
+# library(cowplot)
+p <- ggdraw() + 
+          draw_plot(melMis,x = 0, y = 0.6, width = .98, height = .38) +
+          draw_plot(rccMis,x = 0, y = 0.41, width = .68, height = .18) + 
+          draw_plot(bladMis,x = 0, y = 0.22, width = .8, height =.18)+
+          draw_plot(gasMis,x = 0, y = 0, width = .333, height = .22)+
+          draw_plot_label(label = c("A: SKCM anti-PD-1/L1", 
+                     "B: KIRC anti-PD-1/L1", 
+                     "C: BLCA anti-PD-1/L1",
+                     "D: STAD anti-PD-1/L1"), size = 16,
+                     x = c(-0.04,-0.038,-0.038,-0.038), y = c(.99,.6,.41,.23),family="Palatino Linotype")
+p
+cairo_pdf(filename = paste0(figuresPath,"Supplemental Figure S2",".pdf"),family = "Palatino Linotype", width = 22, height=18)
+  print(p)
+dev.off()
+
+# ggsave(p, filename = paste0(figuresPath,"Supplemental Figure S2.tiff"), dpi = 600,width = 22,
+#        height = 22, units = "in")
+```
+
+
+# Session
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"E_07_MissingData.txt"))
+
+sessionInfo()
+
+```

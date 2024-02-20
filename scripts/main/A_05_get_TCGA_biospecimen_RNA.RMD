@@ -1,0 +1,1424 @@
+---
+title: "Intratumoral T-cell and B-cell receptor architecture associates with distinct immune tumor microenvironment features and clinical outcomes of anti-PD-1/L1 immunotherapy"
+subtitle: <center>Get TCGA biospecimen Data with TCGAbiolinks -- Download & filtering</center>
+author: "Aimilia Schina"
+date: '`r paste("First created on 9 October 2019. Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  html_document:
+    css: style.css
+    code_folding: hide
+    #smooth_scroll: yes
+    fig_caption: yes
+    #highlight: textmate
+    #theme: cerulean
+    #theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 4
+    number_sections: true
+    #df_print: paged
+
+---
+
+
+```{r setup, include=TRUE}
+knitr::opts_knit$set(root.dir = 'D:/BIOINF/PROJECTS/2_ANALYSES/18_GIT_PAPERS/TCR_BCR_antiPD1')
+unlink("scripts/main/A_05_get_TCGA_biospecimen_RNA_cache", recursive = TRUE)
+```
+
+
+
+```{r,warning=F, message=F}
+#####################
+### Load packages ###
+#####################
+library(pacman)
+pacman::p_load(TCGAbiolinks,dplyr,parallel,DT,extrafont)
+extrafont::loadfonts(device="win")
+windowsFonts(sans="Palatino Linotype")
+loadfonts(device="win")
+loadfonts(device="postscript")
+
+```
+
+
+```{r,warning=F, message=F}
+###########################
+### Main analysis paths ###
+###########################
+# Main
+scriptsPath <- paste0("scripts/")
+scriptsFunctionsPath <- paste0(scriptsPath,"functions/")
+projectDataPath <- paste0("data/")
+# Input
+tcgaInputData <- paste0(projectDataPath,"TCGA/")
+otherInputData <- paste0(projectDataPath,"other/")
+referenceInputData <- paste0(projectDataPath,"reference/")
+# Output
+projectOutDataPath <- paste0("output/data_files/")
+tcgaIntermediateData <- paste0(projectOutDataPath,"TCGA/")
+# Session/dependencies
+sessionInfoPath <- paste0("session_info/")
+
+
+######################################
+## Create intermediate output paths ##
+######################################
+if (!dir.exists(tcgaIntermediateData)) {dir.create(tcgaIntermediateData)}
+
+
+##################################
+### LOAD SOURCE FUNCTIONS FILE ###
+##################################
+source(paste0(scriptsFunctionsPath,"tcgaReplicateFilter.R"))
+source(paste0(scriptsFunctionsPath,"get_TCGA_biospecimen_RNA_functions.R"))
+
+
+#####################
+### File suffixes ###
+#####################
+Rdata.suffix <- ".RData"
+
+
+########################
+### Script variables ###
+########################
+run_clean <- TRUE
+```
+
+
+# Aim
+
+To get all available biospecimen data(legacy and harmonized) for all TCGA projects. After downloading of the data, merging separately the legacy and harmonized, we filter the aliquote replicates, in order to get one aliquot/sample per patient. The replicated data are kept for later on, to be merged with HTSEQ-FPKM-UQ TCGA data, since there were inconsistencies in availability of aliquots.
+
+* TCGA Sample Info: via the _TCGAbiolinks_ R package. The samples information table was filtered to remove FFPE samples and replicates, select samples labeled as TP and RNA-Seq (based on analyte type).
+* TCGA molecular subtypes: via the _TCGAbiolinks_ R package
+* TCGA HTSEQ-FPKM-UQ RNA-Seq data: via the _TCGAbiolinks_ R package
+
+The final data table used in this analysis consists of columns such as analyte, sample, patient barcode, TCGA project, sample type, TuTACK signature score and T-cell-inflamed GEP score (Ayers et al.).Again, since these are TCGA data, it seems we have multiple aliquots for some samples from the patients. To deal with this, Broad institute recommends to take the sample with the highest lexicographical sort value for the plate number (penultimate segment of the full TCGA barcode). To do this I have used  an updated version of the tcga_replicateFilter function, created by ShixiangWang, made available on Github[https://github.com/ShixiangWang/Scripts/blob/master/TCGA_operation.R].
+
+Use the function that applies the analyte and sort replicate filters on the aliquot barcodes of TCGA data. For RNA seq:
+
+* Analyte replicate filter, when aliquots have different analytes. T analytes are dropped in preference to H and R (T is inferior extraction protocol). If H & R, H is chosen, in an arbitrary way since we do not know whether H or R is better. If there are multiple aliquots associated with chosen RNA analyte, the aliquot with the later plate number is chosen.
+* Sort Replicate filer: when analyte filter still produces more than one aliquots. Choses the aliquot with the highest lexicographical sort value to ensure that the highest portion and/or plate number is selected when all other barcode fields are identical.
+
+<div class="alert alert-warning">
+  <strong>Note:</strong> We download data for both primary solid tumor and solid normal tissue. So after filtering, we expect to have a minimum of one aliquot/sample per patient, but we can also have two, one for tumor and one for normal.
+</div>
+
+# Load TCGA MSI status information
+```{r,warning=F, message=F,fig.show = 'hold', eval=T}
+# Load MSI data
+
+msi_tcga_all_f <-loadRData(paste0(tcgaInputData,"msi_tcga_all",Rdata.suffix))
+```
+
+# Download of both legacy and harmonized biospecimen data
+
+Due to archiving of GDC legacy data (see [here](https://gdc.cancer.gov/news-and-announcements/gdc-legacy-archive-retires)),the code chunk below is no longer working. Downloaded biospecimen TCGA data can be found in the input TCGA data folder.
+
+```{r,warning=F, message=F,fig.show = 'hold', eval=FALSE}
+# There are differences between legacy and non legacy data, so I will dowanload both, have them separate BUT also merge them
+###################################################################
+tcga_projects <-TCGAbiolinks:::getGDCprojects()$project_id
+mycancertypes <- tcga_projects[grepl("^TCGA-",tcga_projects)] # total 33
+mycancertypes <- mycancertypes[order(mycancertypes)]
+
+biospecimen_tcga.legacy <- data.frame(bcr_sample_barcode=character(),
+                                sample_type_id = numeric(),
+                                sample_type = character(),
+                                project = character(),
+                                bcr_aliquot_barcode = character(),
+                                analyte_type_id = character(),
+                                bcr_analyte_barcode = character(),
+                                bcr_patient_barcode = character(),
+                                stringsAsFactors=FALSE)
+
+biospecimen_tcga.nonlegacy <- data.frame(bcr_sample_barcode=character(),
+                                      sample_type_id = numeric(),
+                                      sample_type = character(),
+                                      project = character(),
+                                      bcr_aliquot_barcode = character(),
+                                      analyte_type_id = character(),
+                                      bcr_analyte_barcode = character(),
+                                      bcr_patient_barcode = character(),
+                                      stringsAsFactors=FALSE)
+
+################
+### DOWNLOAD ###
+################
+#--------#
+# LEGACY #
+#--------#
+no_cores <- detectCores()-1
+cl <- makeCluster(no_cores,outfile=paste0(tcgaInputData,"extract_biospecimenLegacyData.txt"))
+
+clusterEvalQ(cl, c(library(TCGAbiolinks),library(dplyr)))
+# Export the play() function to the cluster
+clusterExport(cl,c("get_biospecimen_tcga.legacy","biospecimen_tcga.legacy"))
+# Get data for all cancers, parallelized
+# FOR NOW REMOVING PAAD,ESCA... since there is a problem/corrupted gdc files
+biospecimen.legacy <- parSapply(cl,mycancertypes[!mycancertypes %in% c("TCGA-ESCA","TCGA-OV","TCGA-PAAD","TCGA-UCS")],function(x) get_biospecimen_tcga.legacy(selectedcancer =x),simplify = FALSE)
+stopCluster(cl)
+# See For how many cancers we got data
+length(biospecimen.legacy)
+
+save(biospecimen.legacy,file=paste0(tcgaInputData,"biospecimen.legacy.all.RData"))
+
+#------------#
+# NON LEGACY #
+#------------#
+no_cores <- detectCores()-1
+cl <- makeCluster(no_cores,outfile=paste0(tcgaInputData,"extract_biospecimenNONLegacyData.txt"))
+# all_var<-ls()
+# clusterExport(cl, all_var)
+clusterEvalQ(cl, c(library(TCGAbiolinks),library(dplyr)))
+# Export the play() function to the cluster
+clusterExport(cl,c("get_biospecimen_tcga.nonlegacy","biospecimen_tcga.nonlegacy"))
+# Get data for all cancers, parallelized
+biospecimen.nonlegacy <- parSapply(cl,mycancertypes,function(x) get_biospecimen_tcga.nonlegacy(selectedcancer =x),simplify = FALSE)
+stopCluster(cl)
+# See For how many cancers we got data
+length(biospecimen.nonlegacy)
+
+save(biospecimen.nonlegacy,file=paste0(tcgaInputData,"biospecimen.nonlegacy.all.RData"))
+```
+
+All biospecimen data, NT and TP, RNA and DNA, legacy and then harmonized.
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+# Load legacy
+biospecimen.legacy<-loadRData(paste0(tcgaInputData,"biospecimen.legacy.all",Rdata.suffix))
+# Load non legacy
+biospecimen.nonlegacy <-loadRData(paste0(tcgaInputData,"biospecimen.nonlegacy.all",Rdata.suffix))
+
+
+tcga_projects <-TCGAbiolinks:::getGDCprojects()$project_id
+mycancertypes <- tcga_projects[grepl("^TCGA-",tcga_projects)] # total 33
+mycancertypes <- mycancertypes[order(mycancertypes)]
+
+###########################
+#--------#
+# LEGACY #
+#--------#
+biospecimen.legacy.tpnt <-process_biospecimenData(biospecimen.legacy, msi_tcga_all_f)
+
+#------------#
+# NON LEGACY #
+#------------#
+biospecimen.nonlegacy.tpnt <-process_biospecimenData(biospecimen.nonlegacy, msi_tcga_all_f)
+
+### TM DATA
+#--------#
+# LEGACY #
+#--------#
+biospecimen.legacy.tmnt <-process_biospecimenData_TM.NT(biospecimen.legacy, msi_tcga_all_f)
+
+
+#------------#
+# NON LEGACY #
+#------------#
+biospecimen.nonlegacy.tmnt <-process_biospecimenData_TM.NT(biospecimen.nonlegacy, msi_tcga_all_f)
+
+```
+
+Extract data only related to RNA-Seq, that means choosing analyte ID of R, T, H.
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+####################
+### Get only RNA ###
+####################
+
+# UPDATED CODE BELOW TO GRAB ALL RNA analytes, R, H, T
+#--------#
+# LEGACY #
+#--------#
+biospecimen.legacy.tpnt.rna <-biospecimen.legacy.tpnt %>% dplyr::filter(analyte_type_id %in% c("R","H","T")) %>% distinct()
+
+# Are there duplicate rows--YESSS
+biospecimen.legacy.tpnt.rna.cl <- biospecimen.legacy.tpnt.rna %>% distinct()## diff with below is 43, so 43 duplicates
+dim(biospecimen.legacy.tpnt.rna.cl)
+# biospecimen.legacy.tpnt.rna.dup <-biospecimen.legacy.tpnt.rna[duplicated(biospecimen.legacy.tpnt.rna),]# WHY DO I HAVE DUPS?LETS CHECK
+# #Check duplicates in original df
+# subset(biospecimen.legacy.tpnt.rna,biospecimen.legacy.tpnt.rna$bcr_aliquot_barcode %in% biospecimen.legacy.tpnt.rna.dup$bcr_aliquot_barcode)
+
+
+#------------#
+# NON LEGACY #
+#------------#
+biospecimen.nonlegacy.tpnt.rna <-biospecimen.nonlegacy.tpnt %>% dplyr::filter(analyte_type_id %in% c("R","H","T")) %>% distinct()
+
+# Are there duplicate rows--YESSS,27271
+biospecimen.nonlegacy.tpnt.rna.cl <- biospecimen.nonlegacy.tpnt.rna %>% distinct()## 27228,diff with below is 43, so 43 duplicates
+dim(biospecimen.nonlegacy.tpnt.rna.cl)
+biospecimen.nonlegacy.tpnt.rna.dup <-biospecimen.nonlegacy.tpnt.rna[duplicated(biospecimen.nonlegacy.tpnt.rna),]# WHY DO I HAVE DUPS?LETS CHECK
+# #Check duplicates in original df
+# subset(biospecimen.nonlegacy.tpnt.rna,biospecimen.nonlegacy.tpnt.rna$bcr_aliquot_barcode %in% biospecimen.nonlegacy.tpnt.rna.dup$bcr_aliquot_barcode)
+
+
+
+
+#########################
+##### METASTATIC ########
+#--------#
+# LEGACY #
+#--------#
+biospecimen.legacy.tmnt.rna <-biospecimen.legacy.tmnt %>% dplyr::filter(analyte_type_id %in% c("R","H","T")) %>% distinct()
+
+biospecimen.legacy.tmnt.rna.cl <- biospecimen.legacy.tmnt.rna %>% distinct()## diff with below is 43, so 43 duplicates
+dim(biospecimen.legacy.tmnt.rna.cl)
+# biospecimen.legacy.tmnt.rna.dup <-biospecimen.legacy.tmnt.rna[duplicated(biospecimen.legacy.tmnt.rna),]# WHY DO I HAVE DUPS?LETS CHECK
+# #Check duplicates in original df
+# subset(biospecimen.legacy.tmnt.rna,biospecimen.legacy.tmnt.rna$bcr_aliquot_barcode %in% biospecimen.legacy.tmnt.rna.dup$bcr_aliquot_barcode)
+
+
+#------------#
+# NON LEGACY #
+#------------#
+biospecimen.nonlegacy.tmnt.rna <-biospecimen.nonlegacy.tmnt %>% dplyr::filter(analyte_type_id %in% c("R","H","T")) %>% distinct()
+
+# Are there duplicate rows--YESSS,27271
+biospecimen.nonlegacy.tmnt.rna.cl <- biospecimen.nonlegacy.tmnt.rna %>% distinct()## 27228,diff with below is 43, so 43 duplicates
+dim(biospecimen.nonlegacy.tmnt.rna.cl)
+biospecimen.nonlegacy.tmnt.rna.dup <-biospecimen.nonlegacy.tmnt.rna[duplicated(biospecimen.nonlegacy.tmnt.rna),]# WHY DO I HAVE DUPS?LETS CHECK
+# #Check duplicates in original df
+# subset(biospecimen.nonlegacy.tmnt.rna,biospecimen.nonlegacy.tmnt.rna$bcr_aliquot_barcode %in% biospecimen.nonlegacy.tmnt.rna.dup$bcr_aliquot_barcode)
+
+
+```
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+
+
+##~~~~~~~~##
+## TABLES ##
+##~~~~~~~~##
+
+#--------#
+# LEGACY #
+#--------#
+# Number of patients per project
+biospecimen.legacy.tpnt.rna.patient.table <- biospecimen.legacy.tpnt.rna.cl %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.legacy.tpnt.rna.aliq.table <- biospecimen.legacy.tpnt.rna.cl %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.legacy.tpnt.rna.aliq.table <-biospecimen.legacy.tpnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.legacy.tpnt.rna.aliqPatient.table <-biospecimen.legacy.tpnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.legacy.tpnt.rna.aliqPatient.table <-biospecimen.legacy.tpnt.rna.cl %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.legacy.tpnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+#------------#
+# NON LEGACY #
+#------------#
+# Number of patients per project
+biospecimen.nonlegacy.tpnt.rna.patient.table <-biospecimen.nonlegacy.tpnt.rna.cl %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.nonlegacy.tpnt.rna.aliq.table <- biospecimen.nonlegacy.tpnt.rna.cl %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.nonlegacy.tpnt.rna.aliq.table <-biospecimen.nonlegacy.tpnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.nonlegacy.tpnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tpnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.nonlegacy.tpnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tpnt.rna.cl %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.nonlegacy.tpnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+###############
+### METASTATIC
+#--------#
+# LEGACY #
+#--------#
+# Number of patients per project
+biospecimen.legacy.tmnt.rna.patient.table <- biospecimen.legacy.tmnt.rna.cl %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.legacy.tmnt.rna.aliq.table <- biospecimen.legacy.tmnt.rna.cl %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.legacy.tmnt.rna.aliq.table <-biospecimen.legacy.tmnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.legacy.tmnt.rna.aliqPatient.table <-biospecimen.legacy.tmnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.legacy.tmnt.rna.aliqPatient.table <-biospecimen.legacy.tmnt.rna.cl %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.legacy.tmnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+#------------#
+# NON LEGACY #
+#------------#
+# Number of patients per project
+biospecimen.nonlegacy.tmnt.rna.patient.table <-biospecimen.nonlegacy.tmnt.rna.cl %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.nonlegacy.tmnt.rna.aliq.table <- biospecimen.nonlegacy.tmnt.rna.cl %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.nonlegacy.tmnt.rna.aliq.table <-biospecimen.nonlegacy.tmnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.nonlegacy.tmnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tmnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.nonlegacy.tmnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tmnt.rna.cl %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.nonlegacy.tmnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+```
+
+## Legacy
+
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tpnt.rna.patient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tpnt.rna.aliq.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (legacy)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tpnt.rna.aliqPatient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (legacy)'
+)
+```
+
+## Legacy - Metastatic
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tmnt.rna.patient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tmnt.rna.aliq.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (legacy)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tmnt.rna.aliqPatient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (legacy)'
+)
+```
+
+## Harmonized
+
+
+```{r, eval = TRUE}
+datatable(biospecimen.nonlegacy.tpnt.rna.patient.table , extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (harmonized)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.nonlegacy.tpnt.rna.aliq.table , extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (harmonized'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.nonlegacy.tpnt.rna.aliqPatient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (harmonized)'
+)
+```
+
+Then I merge legacy with harmonized data
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+## Merge Legacy and non-legacy tables-RNA
+biospecimen.tpnt.rna.merged <- rbind(biospecimen.legacy.tpnt.rna.cl,biospecimen.nonlegacy.tpnt.rna.cl)#50462
+# Check if duplicates-remove duplicate rows
+biospecimen.tpnt.rna.merged.cl <- biospecimen.tpnt.rna.merged %>% distinct()#27230
+dim(biospecimen.tpnt.rna.merged.cl)
+
+
+#--------#
+# MERGED #
+#--------#
+# Number of patients per project
+biospecimen.tpnt.rna.merged.patient.table <-biospecimen.tpnt.rna.merged.cl %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tpnt.rna.merged.aliq.table <- biospecimen.tpnt.rna.merged.cl %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.nonlegacy.tpnt.rna.aliq.table <-biospecimen.nonlegacy.tpnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.nonlegacy.tpnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tpnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.tpnt.rna.merged.aliqPatient.table <-biospecimen.tpnt.rna.merged.cl %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.nonlegacy.tpnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+
+#######################
+#### METASTATIC
+## Merge Legacy and non-legacy tables-RNA
+biospecimen.tmnt.rna.merged <- rbind(biospecimen.legacy.tmnt.rna.cl,biospecimen.nonlegacy.tmnt.rna.cl)#50462
+# Check if duplicates-remove duplicate rows
+biospecimen.tmnt.rna.merged.cl <- biospecimen.tmnt.rna.merged %>% distinct()#27230
+dim(biospecimen.tmnt.rna.merged.cl)
+
+
+#--------#
+# MERGED #
+#--------#
+# Number of patients per project
+biospecimen.tmnt.rna.merged.patient.table <-biospecimen.tmnt.rna.merged.cl %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tmnt.rna.merged.aliq.table <- biospecimen.tmnt.rna.merged.cl %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.nonlegacy.tmnt.rna.aliq.table <-biospecimen.nonlegacy.tmnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.nonlegacy.tmnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tmnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.tmnt.rna.merged.aliqPatient.table <-biospecimen.tmnt.rna.merged.cl %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.nonlegacy.tmnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+```
+
+# Filtering
+
+After, I filter based on BROAD institute instructions with the two filtering processes, as described above. Filtering is performed separately in legacy, harmonized and merged data.
+```{r,warning=F, message=F,fig.show = 'hold'}
+##################################
+#### POST-FILTERING REPLICATES ###
+##################################
+##~~~~~~~~~~##
+## Filtering##
+##~~~~~~~~~~##
+
+#--------#
+# LEGACY #
+#--------#
+biospecimen.legacy.tpnt.rna.barcodes <- tcga_replicateFilter(biospecimen.legacy.tpnt.rna.cl$bcr_aliquot_barcode , analyte_target = "RNA",filter_FFPE=TRUE, full_barcode=TRUE)
+#23234=>10307
+# Subset to filtered barcodes
+biospecimen.legacy.tpnt.rna.filt <- subset(biospecimen.legacy.tpnt.rna.cl,biospecimen.legacy.tpnt.rna.cl$bcr_aliquot_barcode %in% biospecimen.legacy.tpnt.rna.barcodes)
+
+#------------#
+# NON LEGACY #
+#------------#
+biospecimen.nonlegacy.tpnt.rna.barcodes <- tcga_replicateFilter(biospecimen.nonlegacy.tpnt.rna.cl$bcr_aliquot_barcode , analyte_target = "RNA",filter_FFPE=TRUE, full_barcode=TRUE)
+#27228 -> 11367
+# Subset to filtered barcodes
+biospecimen.nonlegacy.tpnt.rna.filt <- subset(biospecimen.nonlegacy.tpnt.rna.cl,biospecimen.nonlegacy.tpnt.rna.cl$bcr_aliquot_barcode %in% biospecimen.nonlegacy.tpnt.rna.barcodes)
+
+#--------#
+# MERGED #
+#--------#
+biospecimen.tpnt.rna.merged.cl.barcodes <- tcga_replicateFilter(biospecimen.tpnt.rna.merged.cl$bcr_aliquot_barcode , analyte_target = "RNA",filter_FFPE=TRUE, full_barcode=TRUE)
+# 27230 -> 11368
+# Subset to filtered barcodes
+biospecimen.tpnt.rna.merged.filt <- subset(biospecimen.tpnt.rna.merged.cl,biospecimen.tpnt.rna.merged.cl$bcr_aliquot_barcode %in% biospecimen.tpnt.rna.merged.cl.barcodes)
+
+
+###################
+### METASTATIC
+#--------#
+# LEGACY #
+#--------#
+biospecimen.legacy.tmnt.rna.barcodes <- tcga_replicateFilter(biospecimen.legacy.tmnt.rna.cl$bcr_aliquot_barcode , analyte_target = "RNA",filter_FFPE=TRUE, full_barcode=TRUE)
+#23234=>10307
+# Subset to filtered barcodes
+biospecimen.legacy.tmnt.rna.filt <- subset(biospecimen.legacy.tmnt.rna.cl,biospecimen.legacy.tmnt.rna.cl$bcr_aliquot_barcode %in% biospecimen.legacy.tmnt.rna.barcodes)
+# 
+
+#------------#
+# NON LEGACY #
+#------------#
+biospecimen.nonlegacy.tmnt.rna.barcodes <- tcga_replicateFilter(biospecimen.nonlegacy.tmnt.rna.cl$bcr_aliquot_barcode , analyte_target = "RNA",filter_FFPE=TRUE, full_barcode=TRUE)
+#27228 -> 11367
+# Subset to filtered barcodes
+biospecimen.nonlegacy.tmnt.rna.filt <- subset(biospecimen.nonlegacy.tmnt.rna.cl,biospecimen.nonlegacy.tmnt.rna.cl$bcr_aliquot_barcode %in% biospecimen.nonlegacy.tmnt.rna.barcodes)
+# 
+
+#--------#
+# MERGED #
+#--------#
+biospecimen.tmnt.rna.merged.cl.barcodes <- tcga_replicateFilter(biospecimen.tmnt.rna.merged.cl$bcr_aliquot_barcode , analyte_target = "RNA",filter_FFPE=TRUE, full_barcode=TRUE)
+# 27230 -> 11368
+# Subset to filtered barcodes
+biospecimen.tmnt.rna.merged.filt <- subset(biospecimen.tmnt.rna.merged.cl,biospecimen.tmnt.rna.merged.cl$bcr_aliquot_barcode %in% biospecimen.tmnt.rna.merged.cl.barcodes)
+
+```
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+
+
+##~~~~~~~~##
+## TABLES ##
+##~~~~~~~~##
+
+#--------#
+# LEGACY #
+#--------#
+# Number of patients per project
+biospecimen.legacy.tpnt.rna.filt.patient.table <- biospecimen.legacy.tpnt.rna.filt %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.legacy.tpnt.rna.filt.aliq.table <- biospecimen.legacy.tpnt.rna.filt %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.legacy.tpnt.rna.aliq.table <-biospecimen.legacy.tpnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.legacy.tpnt.rna.aliqPatient.table <-biospecimen.legacy.tpnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.legacy.tpnt.rna.filt.aliqPatient.table <-biospecimen.legacy.tpnt.rna.filt %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.legacy.tpnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+#------------#
+# NON LEGACY #
+#------------#
+# Number of patients per project
+biospecimen.nonlegacy.tpnt.rna.filt.patient.table <-biospecimen.nonlegacy.tpnt.rna.filt %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.nonlegacy.tpnt.rna.filt.aliq.table <- biospecimen.nonlegacy.tpnt.rna.filt %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.nonlegacy.tpnt.rna.aliq.table <-biospecimen.nonlegacy.tpnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.nonlegacy.tpnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tpnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.nonlegacy.tpnt.rna.filt.aliqPatient.table <-biospecimen.nonlegacy.tpnt.rna.filt %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.nonlegacy.tpnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+
+#--------#
+# MERGED #
+#=-------#
+# Number of patients per project
+biospecimen.tpnt.rna.merged.filt.patient.table <-biospecimen.tpnt.rna.merged.filt %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tpnt.rna.merged.filt.aliq.table <- biospecimen.tpnt.rna.merged.filt %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.nonlegacy.tpnt.rna.aliq.table <-biospecimen.nonlegacy.tpnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.nonlegacy.tpnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tpnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.tpnt.rna.merged.filt.aliqPatient.table <-biospecimen.tpnt.rna.merged.filt %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.nonlegacy.tpnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+dim(biospecimen.legacy.tpnt.rna.filt)
+dim(biospecimen.nonlegacy.tpnt.rna.filt)
+dim(biospecimen.tpnt.rna.merged.filt)
+
+
+########### METASTATIC
+#--------#
+# LEGACY #
+#--------#
+# Number of patients per project
+biospecimen.legacy.tmnt.rna.filt.patient.table <- biospecimen.legacy.tmnt.rna.filt %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.legacy.tmnt.rna.filt.aliq.table <- biospecimen.legacy.tmnt.rna.filt %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.legacy.tmnt.rna.aliq.table <-biospecimen.legacy.tmnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.legacy.tmnt.rna.aliqPatient.table <-biospecimen.legacy.tmnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.legacy.tmnt.rna.filt.aliqPatient.table <-biospecimen.legacy.tmnt.rna.filt %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.legacy.tmnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+#------------#
+# NON LEGACY #
+#------------#
+# Number of patients per project
+biospecimen.nonlegacy.tmnt.rna.filt.patient.table <-biospecimen.nonlegacy.tmnt.rna.filt %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.nonlegacy.tmnt.rna.filt.aliq.table <- biospecimen.nonlegacy.tmnt.rna.filt %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.nonlegacy.tmnt.rna.aliq.table <-biospecimen.nonlegacy.tmnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.nonlegacy.tmnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tmnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.nonlegacy.tmnt.rna.filt.aliqPatient.table <-biospecimen.nonlegacy.tmnt.rna.filt %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.nonlegacy.tmnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+
+#--------#
+# MERGED #
+#=-------#
+# Number of patients per project
+biospecimen.tmnt.rna.merged.filt.patient.table <-biospecimen.tmnt.rna.merged.filt %>% select(project,bcr_patient_barcode) %>% group_by(project) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tmnt.rna.merged.filt.aliq.table <- biospecimen.tmnt.rna.merged.filt %>% select(project,bcr_aliquot_barcode) %>% group_by(project) %>% distinct() %>% summarise(n())
+#biospecimen.nonlegacy.tmnt.rna.aliq.table <-biospecimen.nonlegacy.tmnt.rna %>% group_by(project) %>% summarize(no_rows=length(project))
+
+# Table of number of replicates per patients per project
+#biospecimen.nonlegacy.tmnt.rna.aliqPatient.table <-biospecimen.nonlegacy.tmnt.rna %>% group_by(project,bcr_patient_barcode) %>% summarize(no_rows=length(project))
+biospecimen.tmnt.rna.merged.filt.aliqPatient.table <-biospecimen.tmnt.rna.merged.filt %>% select(project,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(project,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+# # Table of number of replicate aliquots
+# biospecimen.nonlegacy.tmnt.rna %>% group_by(project,bcr_aliquot_barcode) %>% summarize(no_rows=length(project))
+
+dim(biospecimen.legacy.tmnt.rna.filt)
+dim(biospecimen.nonlegacy.tmnt.rna.filt)
+dim(biospecimen.tmnt.rna.merged.filt)
+```
+
+## Legacy
+
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tpnt.rna.filt.patient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tpnt.rna.filt.aliq.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (legacy)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.legacy.tpnt.rna.filt.aliqPatient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (legacy)'
+)
+```
+
+## Harmonized
+
+
+```{r, eval = TRUE}
+datatable(biospecimen.nonlegacy.tpnt.rna.filt.patient.table , extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (harmonized)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.nonlegacy.tpnt.rna.filt.aliq.table , extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (harmonized)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.nonlegacy.tpnt.rna.filt.aliqPatient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (harmonized)'
+)
+```
+
+
+### Merged
+
+```{r, eval = TRUE}
+datatable(biospecimen.tpnt.rna.merged.filt.patient.table , extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (merged)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.tpnt.rna.merged.filt.aliq.table , extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (merged)'
+)
+```
+
+```{r, eval = TRUE}
+datatable(biospecimen.tpnt.rna.merged.filt.aliqPatient.table, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (merged)'
+)
+```
+
+# Compare Pre- and Post-filtering data {.tabset .tabset-fade .tabset-pills}
+
+## Legacy {.tabset .tabset-fade .tabset-pills}
+
+### Number of patients per project
+```{r, eval = TRUE}
+biospecimen.legacy.tpnt.rna.patient.table.comb <- merge(biospecimen.legacy.tpnt.rna.patient.table,biospecimen.legacy.tpnt.rna.filt.patient.table, by = "project")
+colnames(biospecimen.legacy.tpnt.rna.patient.table.comb) <- c("project","pre","post")
+
+datatable(biospecimen.legacy.tpnt.rna.patient.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy)'
+)
+```
+
+### Number of aliquots per project
+
+```{r, eval = TRUE}
+biospecimen.legacy.tpnt.rna.aliq.table.comb <- merge(biospecimen.legacy.tpnt.rna.aliq.table,biospecimen.legacy.tpnt.rna.filt.patient.table, by = "project")
+colnames(biospecimen.legacy.tpnt.rna.aliq.table.comb) <- c("project","pre","post")
+
+datatable(biospecimen.legacy.tpnt.rna.aliq.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (legacy)'
+)
+```
+
+### Number of aliquots per patient per project
+
+```{r, eval = TRUE}
+biospecimen.legacy.tpnt.rna.aliqPatient.table.comb <- merge(biospecimen.legacy.tpnt.rna.aliqPatient.table,biospecimen.legacy.tpnt.rna.filt.aliqPatient.table, by = c("project","bcr_patient_barcode"))
+colnames(biospecimen.legacy.tpnt.rna.aliqPatient.table.comb) <- c("project","patientID","pre","post")
+
+datatable(biospecimen.legacy.tpnt.rna.aliqPatient.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (legacy)'
+)
+```
+
+
+## Harmonized {.tabset .tabset-fade .tabset-pills}
+
+### Number of patients per project
+```{r, eval = TRUE}
+biospecimen.nonlegacy.tpnt.rna.patient.table.comb <- merge(biospecimen.nonlegacy.tpnt.rna.patient.table,biospecimen.nonlegacy.tpnt.rna.filt.patient.table, by = "project")
+colnames(biospecimen.nonlegacy.tpnt.rna.patient.table.comb) <- c("project","pre","post")
+
+datatable(biospecimen.nonlegacy.tpnt.rna.patient.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (nonlegacy)'
+)
+```
+
+### Number of aliquots per project
+
+```{r, eval = TRUE}
+biospecimen.nonlegacy.tpnt.rna.aliq.table.comb <- merge(biospecimen.nonlegacy.tpnt.rna.aliq.table,biospecimen.nonlegacy.tpnt.rna.filt.patient.table, by = "project")
+colnames(biospecimen.nonlegacy.tpnt.rna.aliq.table.comb) <- c("project","pre","post")
+
+datatable(biospecimen.nonlegacy.tpnt.rna.aliq.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (nonlegacy)'
+)
+```
+
+### Number of aliquots per patient per project
+
+```{r, eval = TRUE}
+biospecimen.nonlegacy.tpnt.rna.aliqPatient.table.comb <- merge(biospecimen.nonlegacy.tpnt.rna.aliqPatient.table,biospecimen.nonlegacy.tpnt.rna.filt.aliqPatient.table, by = c("project","bcr_patient_barcode"))
+colnames(biospecimen.nonlegacy.tpnt.rna.aliqPatient.table.comb) <- c("project","patientID","pre","post")
+
+datatable(biospecimen.nonlegacy.tpnt.rna.aliqPatient.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (nonlegacy)'
+)
+```
+
+## Merged {.tabset .tabset-fade .tabset-pills}
+
+### Number of patients per project
+```{r, eval = TRUE}
+biospecimen.tpnt.rna.merged.patient.table.comb <- merge(biospecimen.tpnt.rna.merged.patient.table,biospecimen.tpnt.rna.merged.filt.patient.table, by = "project")
+colnames(biospecimen.tpnt.rna.merged.patient.table.comb) <- c("project","pre","post")
+
+datatable(biospecimen.tpnt.rna.merged.patient.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (nonlegacy)'
+)
+```
+
+### Number of aliquots per project
+
+```{r, eval = TRUE}
+biospecimen.tpnt.rna.merged.aliq.table.comb <- merge(biospecimen.tpnt.rna.merged.aliq.table,biospecimen.tpnt.rna.merged.filt.patient.table, by = "project")
+colnames(biospecimen.tpnt.rna.merged.aliq.table.comb) <- c("project","pre","post")
+
+datatable(biospecimen.tpnt.rna.merged.aliq.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (nonlegacy)'
+)
+```
+
+### Number of aliquots per patient per project
+
+```{r, eval = TRUE}
+biospecimen.tpnt.rna.merged.aliqPatient.table.comb <- merge(biospecimen.tpnt.rna.merged.aliqPatient.table,biospecimen.tpnt.rna.merged.filt.aliqPatient.table, by = c("project","bcr_patient_barcode"))
+colnames(biospecimen.tpnt.rna.merged.aliqPatient.table.comb) <- c("project","patientID","pre","post")
+
+datatable(biospecimen.tpnt.rna.merged.aliqPatient.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (nonlegacy)'
+)
+```
+
+# Tumor vs Normal {.tabset .tabset-fade .tabset-pills}
+
+Summarizing number of tumor and normal aliquots for all TCGA projects, pre- and post-filtering
+
+## Legacy
+
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.legacy.tpnt.rna.cl.group <- biospecimen.legacy.tpnt.rna.cl %>% group_by(project,sample_type) %>% summarize(no_rows=length(project))
+biospecimen.legacy.tpnt.rna.filt.group <- biospecimen.legacy.tpnt.rna.filt %>% group_by(project,sample_type) %>% summarize(no_rows=length(project))
+
+
+biospecimen.tpnt.rna.legacy.group.table.comb <- merge(biospecimen.legacy.tpnt.rna.cl.group,biospecimen.legacy.tpnt.rna.filt.group, by = c("project","sample_type"))
+colnames(biospecimen.tpnt.rna.legacy.group.table.comb) <- c("project", "sample_type", "pre", "post")
+
+```
+
+
+```{r, eval = TRUE}
+datatable(biospecimen.tpnt.rna.legacy.group.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy)'
+)
+```
+
+## Harmonized
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.nonlegacy.tpnt.rna.cl.group <- biospecimen.nonlegacy.tpnt.rna.cl %>% group_by(project,sample_type) %>% summarize(no_rows=length(project))
+biospecimen.nonlegacy.tpnt.rna.filt.group <- biospecimen.nonlegacy.tpnt.rna.filt %>% group_by(project,sample_type) %>% summarize(no_rows=length(project))
+
+
+biospecimen.tpnt.rna.nonlegacy.group.table.comb <- merge(biospecimen.nonlegacy.tpnt.rna.cl.group,biospecimen.nonlegacy.tpnt.rna.filt.group, by = c("project","sample_type"))
+colnames(biospecimen.tpnt.rna.nonlegacy.group.table.comb) <- c("project", "sample_type", "pre", "post")
+
+```
+
+
+```{r, eval = TRUE}
+datatable(biospecimen.tpnt.rna.nonlegacy.group.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy)'
+)
+```
+
+## Merged
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.tpnt.rna.merged.cl.group <- biospecimen.tpnt.rna.merged.cl %>% group_by(project,sample_type) %>% summarize(no_rows=length(project))
+biospecimen.tpnt.rna.merged.filt.group <- biospecimen.tpnt.rna.merged.filt %>% group_by(project,sample_type) %>% summarize(no_rows=length(project))
+
+
+biospecimen.tpnt.rna.merged.group.table.comb <- merge(biospecimen.tpnt.rna.merged.cl.group,biospecimen.tpnt.rna.merged.filt.group, by = c("project","sample_type"))
+colnames(biospecimen.tpnt.rna.merged.group.table.comb) <- c("project", "sample_type", "pre", "post")
+
+```
+
+
+```{r, eval = TRUE}
+datatable(biospecimen.tpnt.rna.merged.group.table.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy)'
+)
+```
+
+# Add molecular subtypes {.tabset .tabset-fade .tabset-pills}
+
+First I will add a column of 'type' with the TCGA projects.
+
+I will add to the tables the BRCA molecular subtypes and the COAD MSI and MSS. I will subset the original projects to the subsets.
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+#################################################
+# ADD BRCA molecular subtypes
+# Get molecular subtypes
+cancer <- "TCGA-BRCA"
+PlatformCancer <- "IlluminaHiSeq_RNASeqV2"
+dataType <- "rsem.genes.results"
+pathCancer <- "TCGAData/miRNA"
+data.category <- "Transcriptome Profiling"
+molecular.subtypes <- PanCancerAtlas_subtypes()
+molecular.subtypes.brca <- subset(molecular.subtypes, molecular.subtypes$cancer.type=="BRCA")
+molecular.subtypes.brca$PatientID <- substr(molecular.subtypes.brca$pan.samplesID,1,12)
+molecular.subtypes$PatientID <- substr(molecular.subtypes$pan.samplesID,1,12)
+```
+
+## Pre-filtering{.tabset .tabset-fade .tabset-pills}
+
+### Legacy
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.legacy.tpnt.rna.cl$type <- gsub("TCGA-","",biospecimen.legacy.tpnt.rna.cl$project)
+# Add brca and Coad subtypes
+biospecimen.legacy.tpnt.rna.cl.f <-add_brcaSubtypes(biospecimen.legacy.tpnt.rna.cl,molecular.subtypes)
+biospecimen.legacy.tpnt.rna.cl.f <-add_coadSubtypes(biospecimen.legacy.tpnt.rna.cl.f)
+dim(biospecimen.legacy.tpnt.rna.cl.f)
+
+
+# Number of patients per project
+biospecimen.legacy.tpnt.rna.patient.sub.table <- biospecimen.legacy.tpnt.rna.cl.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.legacy.tpnt.rna.aliq.sub.table <- biospecimen.legacy.tpnt.rna.cl.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+# Table of number of replicates per patients per project
+biospecimen.legacy.tpnt.rna.aliqPatient.sub.table <-biospecimen.legacy.tpnt.rna.cl.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+
+
+############# METASTATIC
+
+biospecimen.legacy.tmnt.rna.cl$type <- gsub("TCGA-","",biospecimen.legacy.tmnt.rna.cl$project)
+# Add brca and Coad subtypes
+biospecimen.legacy.tmnt.rna.cl.f <-add_brcaSubtypes(biospecimen.legacy.tmnt.rna.cl,molecular.subtypes)
+biospecimen.legacy.tmnt.rna.cl.f <-add_coadSubtypes(biospecimen.legacy.tmnt.rna.cl.f)
+dim(biospecimen.legacy.tmnt.rna.cl.f)
+
+
+# Number of patients per project
+biospecimen.legacy.tmnt.rna.patient.sub.table <- biospecimen.legacy.tmnt.rna.cl.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.legacy.tmnt.rna.aliq.sub.table <- biospecimen.legacy.tmnt.rna.cl.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+# Table of number of replicates per patients per project
+biospecimen.legacy.tmnt.rna.aliqPatient.sub.table <-biospecimen.legacy.tmnt.rna.cl.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+
+```
+
+### Harmonized
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.nonlegacy.tpnt.rna.cl$type <- gsub("TCGA-","",biospecimen.nonlegacy.tpnt.rna.cl$project)
+# Add brca and Coad subtypes
+biospecimen.nonlegacy.tpnt.rna.cl.f <-add_brcaSubtypes(biospecimen.nonlegacy.tpnt.rna.cl,molecular.subtypes)
+biospecimen.nonlegacy.tpnt.rna.cl.f <-add_coadSubtypes(biospecimen.nonlegacy.tpnt.rna.cl.f)
+dim(biospecimen.nonlegacy.tpnt.rna.cl.f)
+
+
+# Number of patients per project
+biospecimen.nonlegacy.tpnt.rna.patient.sub.table <-biospecimen.nonlegacy.tpnt.rna.cl.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.nonlegacy.tpnt.rna.aliq.sub.table <- biospecimen.nonlegacy.tpnt.rna.cl.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.nonlegacy.tpnt.rna.aliqPatient.sub.table <-biospecimen.nonlegacy.tpnt.rna.cl.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+
+############ METASTATIC
+
+biospecimen.nonlegacy.tmnt.rna.cl$type <- gsub("TCGA-","",biospecimen.nonlegacy.tmnt.rna.cl$project)
+# Add brca and Coad subtypes
+biospecimen.nonlegacy.tmnt.rna.cl.f <-add_brcaSubtypes(biospecimen.nonlegacy.tmnt.rna.cl,molecular.subtypes)
+biospecimen.nonlegacy.tmnt.rna.cl.f <-add_coadSubtypes(biospecimen.nonlegacy.tmnt.rna.cl.f)
+dim(biospecimen.nonlegacy.tmnt.rna.cl.f)
+
+
+# Number of patients per project
+biospecimen.nonlegacy.tmnt.rna.patient.sub.table <-biospecimen.nonlegacy.tmnt.rna.cl.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.nonlegacy.tmnt.rna.aliq.sub.table <- biospecimen.nonlegacy.tmnt.rna.cl.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.nonlegacy.tmnt.rna.aliqPatient.sub.table <-biospecimen.nonlegacy.tmnt.rna.cl.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+```
+
+### Merged
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.tpnt.rna.merged.cl$type <- gsub("TCGA-","",biospecimen.tpnt.rna.merged.cl$project)
+# Add brca and Coad subtypes
+biospecimen.tpnt.rna.merged.cl.f <-add_brcaSubtypes(biospecimen.tpnt.rna.merged.cl,molecular.subtypes)
+biospecimen.tpnt.rna.merged.cl.f <-add_coadSubtypes(biospecimen.tpnt.rna.merged.cl.f)
+dim(biospecimen.tpnt.rna.merged.cl.f)
+
+# SAVE
+save(biospecimen.tpnt.rna.merged.cl.f,file=paste0(tcgaIntermediateData,"biospecimen.merged.tpnt.RNA.noDup.sub.RData"))
+# load(paste0("C:/Users/aimilia/BIOINF/1_DATA/3_TCGA/2_Clinical_Meta/New.v2/","biospecimen.merged.tpnt.RNA.noDup.sub.RData"))
+                                                                            
+# Number of patients per project
+biospecimen.tpnt.rna.merged.patient.sub.table <-biospecimen.tpnt.rna.merged.cl.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tpnt.rna.merged.aliq.sub.table <- biospecimen.tpnt.rna.merged.cl.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.tpnt.rna.merged.aliqPatient.sub.table <-biospecimen.tpnt.rna.merged.cl.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+
+biospecimen.tmnt.rna.merged.cl$type <- gsub("TCGA-","",biospecimen.tmnt.rna.merged.cl$project)
+# Add brca and Coad subtypes
+biospecimen.tmnt.rna.merged.cl.f <-add_brcaSubtypes(biospecimen.tmnt.rna.merged.cl,molecular.subtypes)
+biospecimen.tmnt.rna.merged.cl.f <-add_coadSubtypes(biospecimen.tmnt.rna.merged.cl.f)
+dim(biospecimen.tmnt.rna.merged.cl.f)
+
+
+# Number of patients per project
+biospecimen.tmnt.rna.merged.patient.sub.table <-biospecimen.tmnt.rna.merged.cl.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tmnt.rna.merged.aliq.sub.table <- biospecimen.tmnt.rna.merged.cl.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.tmnt.rna.merged.aliqPatient.sub.table <-biospecimen.tmnt.rna.merged.cl.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+```
+
+## Post-filtering {.tabset .tabset-fade .tabset-pills}
+
+To get post-filtering data, I extract the subtypes from non-filtered data, filter them and then merge with filtered data
+
+### Legacy
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.legacy.tpnt.rna.filt$type <- gsub("TCGA-","",biospecimen.legacy.tpnt.rna.filt$project)
+
+biospecimen.legacy.tpnt.rna.filt.f <-add_brcaSubtypesFilt(biospecimen.legacy.tpnt.rna.cl,biospecimen.legacy.tpnt.rna.filt,molecular.subtypes)
+biospecimen.legacy.tpnt.rna.filt.f <-add_coadSubtypesFilt(biospecimen.legacy.tpnt.rna.cl,biospecimen.legacy.tpnt.rna.filt.f)
+dim(biospecimen.legacy.tpnt.rna.filt.f)
+
+# Number of patients per project
+biospecimen.legacy.tpnt.rna.filt.patient.sub.table <- biospecimen.legacy.tpnt.rna.filt.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.legacy.tpnt.rna.filt.aliq.sub.table <- biospecimen.legacy.tpnt.rna.filt.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.legacy.tpnt.rna.filt.aliqPatient.sub.table <-biospecimen.legacy.tpnt.rna.filt.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+
+############## METASTATIVC
+biospecimen.legacy.tmnt.rna.filt$type <- gsub("TCGA-","",biospecimen.legacy.tmnt.rna.filt$project)
+
+biospecimen.legacy.tmnt.rna.filt.f <-add_brcaSubtypesFilt(biospecimen.legacy.tmnt.rna.cl,biospecimen.legacy.tmnt.rna.filt,molecular.subtypes)
+biospecimen.legacy.tmnt.rna.filt.f <-add_coadSubtypesFilt(biospecimen.legacy.tmnt.rna.cl,biospecimen.legacy.tmnt.rna.filt.f)
+dim(biospecimen.legacy.tmnt.rna.filt.f)
+
+
+# Number of patients per project
+biospecimen.legacy.tmnt.rna.filt.patient.sub.table <- biospecimen.legacy.tmnt.rna.filt.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.legacy.tmnt.rna.filt.aliq.sub.table <- biospecimen.legacy.tmnt.rna.filt.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.legacy.tmnt.rna.filt.aliqPatient.sub.table <-biospecimen.legacy.tmnt.rna.filt.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+```
+
+### Harmonized
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.nonlegacy.tpnt.rna.filt$type <- gsub("TCGA-","",biospecimen.nonlegacy.tpnt.rna.filt$project)
+
+biospecimen.nonlegacy.tpnt.rna.filt.f <-add_brcaSubtypesFilt(biospecimen.nonlegacy.tpnt.rna.cl,biospecimen.nonlegacy.tpnt.rna.filt,molecular.subtypes)
+biospecimen.nonlegacy.tpnt.rna.filt.f <-add_coadSubtypesFilt(biospecimen.nonlegacy.tpnt.rna.cl,biospecimen.nonlegacy.tpnt.rna.filt.f)
+dim(biospecimen.nonlegacy.tpnt.rna.filt.f)
+
+
+# Number of patients per project
+biospecimen.nonlegacy.tpnt.rna.filt.patient.sub.table <-biospecimen.nonlegacy.tpnt.rna.filt.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.nonlegacy.tpnt.rna.filt.aliq.sub.table <- biospecimen.nonlegacy.tpnt.rna.filt.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.nonlegacy.tpnt.rna.filt.aliqPatient.sub.table <-biospecimen.nonlegacy.tpnt.rna.filt.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+
+
+########### METASTATIC
+biospecimen.nonlegacy.tmnt.rna.filt$type <- gsub("TCGA-","",biospecimen.nonlegacy.tmnt.rna.filt$project)
+
+biospecimen.nonlegacy.tmnt.rna.filt.f <-add_brcaSubtypesFilt(biospecimen.nonlegacy.tmnt.rna.cl,biospecimen.nonlegacy.tmnt.rna.filt,molecular.subtypes)
+biospecimen.nonlegacy.tmnt.rna.filt.f <-add_coadSubtypesFilt(biospecimen.nonlegacy.tmnt.rna.cl,biospecimen.nonlegacy.tmnt.rna.filt.f)
+dim(biospecimen.nonlegacy.tmnt.rna.filt.f)
+
+
+# Number of patients per project
+biospecimen.nonlegacy.tmnt.rna.filt.patient.sub.table <-biospecimen.nonlegacy.tmnt.rna.filt.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.nonlegacy.tmnt.rna.filt.aliq.sub.table <- biospecimen.nonlegacy.tmnt.rna.filt.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.nonlegacy.tmnt.rna.filt.aliqPatient.sub.table <-biospecimen.nonlegacy.tmnt.rna.filt.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+```
+
+### Merged
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.tpnt.rna.merged.filt$type <- gsub("TCGA-","",biospecimen.tpnt.rna.merged.filt$project)
+# Add brca and Coad subtypes
+biospecimen.tpnt.rna.merged.filt.f <-add_brcaSubtypesFilt(biospecimen.tpnt.rna.merged.cl,biospecimen.tpnt.rna.merged.filt,molecular.subtypes)
+biospecimen.tpnt.rna.merged.filt.f <-add_coadSubtypesFilt(biospecimen.tpnt.rna.merged.cl,biospecimen.tpnt.rna.merged.filt.f)
+dim(biospecimen.tpnt.rna.merged.filt.f)
+
+
+# Number of patients per project
+biospecimen.tpnt.rna.merged.filt.patient.sub.table <-biospecimen.tpnt.rna.merged.filt.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tpnt.rna.merged.filt.aliq.sub.table <- biospecimen.tpnt.rna.merged.filt.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.tpnt.rna.merged.filt.aliqPatient.sub.table <-biospecimen.tpnt.rna.merged.filt.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+
+
+############### METASTATIC
+biospecimen.tmnt.rna.merged.filt$type <- gsub("TCGA-","",biospecimen.tmnt.rna.merged.filt$project)
+# Add brca and Coad subtypes
+biospecimen.tmnt.rna.merged.filt.f <-add_brcaSubtypesFilt(biospecimen.tmnt.rna.merged.cl,biospecimen.tmnt.rna.merged.filt,molecular.subtypes)
+biospecimen.tmnt.rna.merged.filt.f <-add_coadSubtypesFilt(biospecimen.tmnt.rna.merged.cl,biospecimen.tmnt.rna.merged.filt.f)
+dim(biospecimen.tmnt.rna.merged.filt.f)
+
+
+# Number of patients per project
+biospecimen.tmnt.rna.merged.filt.patient.sub.table <-biospecimen.tmnt.rna.merged.filt.f %>% select(type,bcr_patient_barcode) %>% group_by(type) %>% distinct() %>% summarize(n())
+# Number of aliquots per project
+biospecimen.tmnt.rna.merged.filt.aliq.sub.table <- biospecimen.tmnt.rna.merged.filt.f %>% select(type,bcr_aliquot_barcode) %>% group_by(type) %>% distinct() %>% summarise(n())
+
+# Table of number of replicates per patients per project
+biospecimen.tmnt.rna.merged.filt.aliqPatient.sub.table <-biospecimen.tmnt.rna.merged.filt.f %>% select(type,bcr_patient_barcode, bcr_aliquot_barcode) %>% group_by(type,bcr_patient_barcode) %>% distinct() %>% summarize(n())
+```
+
+# Compare pre- and post-filtered data with subtypes included {.tabset .tabset-fade .tabset-pills}
+
+## Legacy
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+
+biospecimen.legacy.tpnt.rna.patient.table.sub.comb <- merge(biospecimen.legacy.tpnt.rna.patient.sub.table,biospecimen.legacy.tpnt.rna.filt.patient.sub.table, by = "type")
+colnames(biospecimen.legacy.tpnt.rna.patient.table.sub.comb) <- c("project","pre","post")
+
+datatable(biospecimen.legacy.tpnt.rna.patient.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (legacy)'
+)
+```
+
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.legacy.tpnt.rna.aliq.table.sub.comb <- merge(biospecimen.legacy.tpnt.rna.aliq.sub.table,biospecimen.legacy.tpnt.rna.filt.patient.sub.table, by = "type")
+colnames(biospecimen.legacy.tpnt.rna.aliq.table.sub.comb) <- c("project","pre","post")
+
+datatable(biospecimen.legacy.tpnt.rna.aliq.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (legacy)'
+)
+
+```
+
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.legacy.tpnt.rna.aliqPatient.table.sub.comb <- merge(biospecimen.legacy.tpnt.rna.aliqPatient.sub.table,biospecimen.legacy.tpnt.rna.filt.aliqPatient.sub.table, by = c("type","bcr_patient_barcode"))
+colnames(biospecimen.legacy.tpnt.rna.aliqPatient.table.sub.comb) <- c("project","patientID","pre","post")
+
+datatable(biospecimen.legacy.tpnt.rna.aliqPatient.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (legacy)'
+)
+```
+
+## Harmonized
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.nonlegacy.tpnt.rna.patient.table.sub.comb <- merge(biospecimen.nonlegacy.tpnt.rna.patient.sub.table,biospecimen.nonlegacy.tpnt.rna.filt.patient.sub.table, by = "type")
+colnames(biospecimen.nonlegacy.tpnt.rna.patient.table.sub.comb) <- c("project","pre","post")
+
+datatable(biospecimen.nonlegacy.tpnt.rna.patient.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (nonlegacy)'
+)
+
+```
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.nonlegacy.tpnt.rna.aliq.table.sub.comb <- merge(biospecimen.nonlegacy.tpnt.rna.aliq.sub.table,biospecimen.nonlegacy.tpnt.rna.filt.patient.sub.table, by = "type")
+colnames(biospecimen.nonlegacy.tpnt.rna.aliq.table.sub.comb) <- c("project","pre","post")
+
+datatable(biospecimen.nonlegacy.tpnt.rna.aliq.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (nonlegacy)'
+)
+```
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.nonlegacy.tpnt.rna.aliqPatient.table.sub.comb <- merge(biospecimen.nonlegacy.tpnt.rna.aliqPatient.sub.table,biospecimen.nonlegacy.tpnt.rna.filt.aliqPatient.sub.table, by = c("type","bcr_patient_barcode"))
+colnames(biospecimen.nonlegacy.tpnt.rna.aliqPatient.table.sub.comb) <- c("project","patientID","pre","post")
+
+datatable(biospecimen.nonlegacy.tpnt.rna.aliqPatient.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (nonlegacy)'
+)
+```
+
+## Merged
+
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.tpnt.rna.merged.patient.table.sub.comb <- merge(biospecimen.tpnt.rna.merged.patient.sub.table,biospecimen.tpnt.rna.merged.filt.patient.sub.table, by = "type")
+colnames(biospecimen.tpnt.rna.merged.patient.table.sub.comb) <- c("project","pre","post")
+
+datatable(biospecimen.tpnt.rna.merged.patient.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of patients per project (nonlegacy)'
+)
+
+```
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.tpnt.rna.merged.aliq.table.sub.comb <- merge(biospecimen.tpnt.rna.merged.aliq.sub.table,biospecimen.tpnt.rna.merged.filt.patient.sub.table, by = "type")
+colnames(biospecimen.tpnt.rna.merged.aliq.table.sub.comb) <- c("project","pre","post")
+
+datatable(biospecimen.tpnt.rna.merged.aliq.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per project (nonlegacy)'
+)
+```
+
+```{r,warning=F, message=F,fig.show = 'hold'}
+biospecimen.tpnt.rna.merged.aliqPatient.table.sub.comb <- merge(biospecimen.tpnt.rna.merged.aliqPatient.sub.table,biospecimen.tpnt.rna.merged.filt.aliqPatient.sub.table, by = c("type","bcr_patient_barcode"))
+colnames(biospecimen.tpnt.rna.merged.aliqPatient.table.sub.comb) <- c("project","patientID","pre","post")
+
+datatable(biospecimen.tpnt.rna.merged.aliqPatient.table.sub.comb, extensions = 'Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'excel', 'csv' ),
+    scrollX=TRUE,
+    pageLength=15
+  ),
+  caption = 'Number of aliquots per patient per project (nonlegacy)'
+)
+```
+
+# Session
+
+```{r,warning=F, message=F,fig.show = 'hold', eval = TRUE, fig.width=15, fig.height=14}
+session_info <- sessionInfo()
+writeLines(capture.output(session_info), paste0(sessionInfoPath,"A_05_get_TCGA_biospecimen_RNA.txt"))
+
+sessionInfo()
+
+```
