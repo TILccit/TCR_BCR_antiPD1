@@ -52,12 +52,12 @@ To reproduce the analysis conducted in the paper, please follow these steps:
 
 Block A scripts running all TCGA data download and processing needs to be run with administrative rights. 
 
-1. A_01_download_tcga_rsem.R: Due to changes in the releases of concrete TCGA Cohorts of cancer types, despite set release date, the downloaded data are different from those we accessed and used for the analysis. Please contact us to get the TCGA RSEM input data used in the manuscript.
-2. A_02_download_tcga_htseq.R : due to changes in the TCGAbiolinks, this code is no longer working. Please contact us to get the HTSEQ count and FPKM-UQ input data used in the manuscript.
-3. A_03_get_vst_normalized.R: vst normalization of TCGA count data
-4. A_04_get_TCGA_msi_status_data.R: due to archiving of GDC legacy data (see [here](https://gdc.cancer.gov/news-and-announcements/gdc-legacy-archive-retires)), this script is no longer working. Downloaded MSI data are provided in the TCGA input data folder.
-5. A_05_get_TCGA_biospecimen_RNA.RMD: gather and filter all TCGA biospecimen data
-6: A_06_tcga_clinical_biomarker_metadata.RMD: Gather table of clinical, biomarker metadata for TCGA samples
+1. _A_01_download_tcga_rsem.R_: Due to changes in the releases of concrete TCGA Cohorts of cancer types, despite set release date, the downloaded data are different from those we accessed and used for the analysis. Please contact us to get the TCGA RSEM input data used in the manuscript.
+2. _A_02_download_tcga_htseq.R_: due to changes in the TCGAbiolinks, this code is no longer working. Please contact us to get the HTSEQ count and FPKM-UQ input data used in the manuscript.
+3. _A_03_get_vst_normalized.R_: vst normalization of TCGA count data
+4. _A_04_get_TCGA_msi_status_data.R_: due to archiving of GDC legacy data (see [here](https://gdc.cancer.gov/news-and-announcements/gdc-legacy-archive-retires)), this script is no longer working. Downloaded MSI data are provided in the TCGA input data folder.
+5. _A_05_get_TCGA_biospecimen_RNA.RMD_: gather and filter all TCGA biospecimen data
+6: _A_06_tcga_clinical_biomarker_metadata.RMD_: Gather table of clinical, biomarker metadata for TCGA samples
 
 These scripts can be executed individually, following the specified order, or directly from the  __A_TCGA_data_preparation.R__ script, encompassing the entire code collection for block A.
 
@@ -65,9 +65,9 @@ These scripts can be executed individually, following the specified order, or di
 
 Block B scripts for all anti-PD(L)1 datasets processing. 
 
-1. B_01_aPD1_data_count_deconvolution_processing.RMD: normalization of count data, immune cell deconvolution using CIBERSORT
-2. B_02_aPD1_TCR_BCR_clones_analysis.RMD: processing of TCR, BCR clone counts
-3. B_03_aPD1_merge_ready_data.R: Merging of clinical, biomarker metadata for anti-PD(L)1 datasets
+1. _B_01_aPD1_data_count_deconvolution_processing.RMD_: normalization of count data, immune cell deconvolution using CIBERSORT
+2. _B_02_aPD1_TCR_BCR_clones_analysis.RMD_: processing of TCR, BCR clone counts
+3. _B_03_aPD1_merge_ready_data.R_: Merging of clinical, biomarker metadata for anti-PD(L)1 datasets
 
 These scripts can be executed individually, following the specified order, or directly from the __B_antiPD(L)1_data_preparation.R__ script, encompassing the entire code collection for block B.
 
@@ -75,10 +75,10 @@ These scripts can be executed individually, following the specified order, or di
 
 Block C scripts for the survival analyses included in the paper. 
 
-1. C_01_TCGA_survival_analysis.RMD: Uni and Multivariate survival analysis for TCGA data
-2. C_01_TCGA_survival_analysis.RMD: Uni and Multivariate survival analysis for anti-PD(L)1 public and restricted data
-3. C_03_TCGA_survival_KMplots.R: Univariate survival analysis and KM plots for TCGA data
-4. C_04_aPD1_survival_KMplots.R: Univariate survival analysis and KM plots for anti-PD(L)1 public and restricted data
+1. _C_01_TCGA_survival_analysis.RMD_: Uni and Multivariate survival analysis for TCGA data
+2. _C_01_TCGA_survival_analysis.RMD_: Uni and Multivariate survival analysis for anti-PD(L)1 public and restricted data
+3. _C_03_TCGA_survival_KMplots.R_: Univariate survival analysis and KM plots for TCGA data
+4. _C_04_aPD1_survival_KMplots.R_: Univariate survival analysis and KM plots for anti-PD(L)1 public and restricted data
 
 These scripts can be executed individually, following the specified order, or directly from the __C_Survival_analyses.R__ script, encompassing the entire code collection for block C.
 
@@ -86,7 +86,7 @@ These scripts can be executed individually, following the specified order, or di
 
 Block D script for the differential expression analysis and GEO enrichment included in the paper. 
 
-1. D_01_DEA_GOenrich_TCGA.RMD: Perform Differential expression analysis on TCGA data, then GO enrichment analysis.
+1. _D_01_DEA_GOenrich_TCGA.RMD_: Perform Differential expression analysis on TCGA data, then GO enrichment analysis.
 
 The script can be executed from the __D_DEA_GOsimilarity_analyses.R__ script, encompassing the entire code collection for block D.
 
@@ -96,13 +96,13 @@ The script can be executed from the __D_DEA_GOsimilarity_analyses.R__ script, en
 
 Block E scripts for performing the predictive modelling of response to anti-PD(L)1 using biomarkers included in the paper. 
 
-1. E_01_aPD1_RFE_multivariate_Scheme_1.R :  Running the models for Scheme 1
-2. E_02_aPD1_RFE_multivariate_Scheme_2_BLADDER.R: Running the models for Scheme 2
-3. E_03_aPD1_RFE_multivariate_Scheme_3_MELANOMA.R: Running the models for Scheme 3
-4. E_04_aPD1_RFE_multivariate_postProcessing_Scheme1.RMD: post-processing of RFE modeling results, logistic regression models, ROC-AUC comparisons for SCHEME 1
-5. E_05_aPD1_RFE_multivariate_postProcessing_Scheme2.RMD: post-processing of RFE modeling results, logistic regression models, ROC-AUC comparisons for SCHEME 2 (BLCA specific)
-6. E_06_aPD1_RFE_multivariate_postProcessing_Scheme3.RMD: post-processing of RFE modeling results, logistic regression models, ROC-AUC comparisons for SCHEME 3 (SKCM specific)
-7. E_07_MissingData.RMD: exploring missing data in the anti-PD-1/L1 datasets, producing Supplemental Figure S2
+1. _E_01_aPD1_RFE_multivariate_Scheme_1.R_ :  Running the models for Scheme 1
+2. _E_02_aPD1_RFE_multivariate_Scheme_2_BLADDER.R_: Running the models for Scheme 2
+3. _E_03_aPD1_RFE_multivariate_Scheme_3_MELANOMA.R_: Running the models for Scheme 3
+4. _E_04_aPD1_RFE_multivariate_postProcessing_Scheme1.RMD_: post-processing of RFE modeling results, logistic regression models, ROC-AUC comparisons for SCHEME 1
+5. _E_05_aPD1_RFE_multivariate_postProcessing_Scheme2.RMD_: post-processing of RFE modeling results, logistic regression models, ROC-AUC comparisons for SCHEME 2 (BLCA specific)
+6. _E_06_aPD1_RFE_multivariate_postProcessing_Scheme3.RMD_: post-processing of RFE modeling results, logistic regression models, ROC-AUC comparisons for SCHEME 3 (SKCM specific)
+7. _E_07_MissingData.RMD_: exploring missing data in the anti-PD-1/L1 datasets, producing Supplemental Figure S2
 
 **Info**: 
 * Scripts 1-3 were executed in Computerome, utilizing 40 cores. Minor variations in results may occur based on the number of cores employed for parallelization. Each script demands a significant amount of computational time.
@@ -120,7 +120,7 @@ Block E scripts for performing the predictive modelling of response to anti-PD(L
 
 Block F script for producing all main and supplemental figures except Supplemental Fig. S2), tables and data included in the paper. 
 
-1. F_paper_figures_tables_files.RMD: producing all figures (except Supplemental Fig. S2) , tables and supplemental files provided in the manuscript.
+1. _F_paper_figures_tables_files.RMD_: producing all figures (except Supplemental Fig. S2) , tables and supplemental files provided in the manuscript.
 - - - -
 
 ## **Note on Supplemental files** ##
@@ -130,22 +130,24 @@ Some supplemental PDF files are stored in the output/figures folder. Others can 
 The **Transparent reporting of a multivariable prediction model for individual prognosis or diagnosis (TRIPOD)** checklist statement submitted for reporting the development and validation of our prediction models, is included in the __docs/__ folder.
 
 ### __Excel files saved in output/data_files__ ###
-Supplemental File 1: Biomarkers pairwise Spearman's correlations- pancancer, multicancer, individual cohorts (jitc-2023-006941supp001)
-Supplemental File 2: Differentially expressed genes - BCR, PDL1, CD8 in SKCM, KIRC, BLCA, STAD cohorts (jitc-2023-006941supp002)
-Supplemental File 3: A. Gene ontology biological processes (BP) focused set, including annotations of all GO annotation offsprings, B. Gene ontology biological processes associated with the differentially upregulated genes in i) BCR Richness high samples compared to BCR Richness low samples,  ii) in PD-L1 expression high samples compared to PD-L1 expression low samples, iii) in CD8+ T-cells infiltration high samples compared to CD8+ T-cells infiltration low samples for the SKCM, KIRC, BLCA, STAD cohorts (jitc-2023-006941supp003)
-Supplemental File 4: ROC-AUC values of univariable models of established biomarkers, TCR richness, BCR richness compared to the bivariable and multivariable models in histology non specific scheme (1), BLCA-specific (2), SKCM-specific (3) (jitc-2023-006941supp004)
+
+* Supplemental File 1: Biomarkers pairwise Spearman's correlations- pancancer, multicancer, individual cohorts (jitc-2023-006941supp001)
+* Supplemental File 2: Differentially expressed genes - BCR, PDL1, CD8 in SKCM, KIRC, BLCA, STAD cohorts (jitc-2023-006941supp002)
+* Supplemental File 3: A. Gene ontology biological processes (BP) focused set, including annotations of all GO annotation offsprings, B. Gene ontology biological processes associated with the differentially upregulated genes in i) BCR Richness high samples compared to BCR Richness low samples,  ii) in PD-L1 expression high samples compared to PD-L1 expression low samples, iii) in CD8+ T-cells infiltration high samples compared to CD8+ T-cells infiltration low samples for the SKCM, KIRC, BLCA, STAD cohorts (jitc-2023-006941supp003)
+* Supplemental File 4: ROC-AUC values of univariable models of established biomarkers, TCR richness, BCR richness compared to the bivariable and multivariable models in histology non specific scheme (1), BLCA-specific (2), SKCM-specific (3) (jitc-2023-006941supp004)
 
 
 ### __Supplemental Files saved as in output/figures__ ###
-Supplemental File 6 - Online Supplemental Figure S2: Missigness analysis of anti-PD-L-1 public data cohorts (jitc-2023-006941supp006)
-Supplemental File 7- Online Supplemental Figure S3: Individual four-type multicancer correlations (jitc-2023-006941supp007)
-Supplemental File 8- Online Supplemental Figure S4: Gene ontology (GO) dotplots of the significantly enriched GO biological processes, contrast setting of high versus low PDL1/CD8 infiltration (jitc-2023-006941supp008)
-Supplemental File 9- Online Supplemental Figure S5: Objective response rate correlations with median logTMB, PD-L1 expression, TIS-GEP, CD8+, CD4+ T-cells, B cells infiltration, tumor purity across 26 TCGA tumor types (jitc-2023-006941supp009)
-Supplemental File 10- Online Supplemental Figure S6: Univariable Cox proportional hazards analysis  - KM plots for TCR and BCR richness (jitc-2023-006941supp010)
-Supplemental File 11- Online Supplemental Figure S7: Univariable Cox proportional hazards analysis  - KM plots for logTMB, PD-L1 expression, TIS-GEP (jitc-2023-006941supp011)
-Supplemental File 12- Online Supplemental Figure S8: Univariable Cox proportional hazards analysis  - KM plots for CD8+, CD4+ T-cells, B cells infiltration, tumor purity(jitc-2023-006941supp012)
-Supplemental File 13- Online Supplemental Figure S9: Predictive modeling workflow (jitc-2023-006941supp013)
-Supplemental File 14- Online Supplemental Figure S10: ROC-AUC comparisons of uni and multivariate RFE models performance across schemes(jitc-2023-006941supp014)
+
+* Supplemental File 6 - Online Supplemental Figure S2: Missigness analysis of anti-PD-L-1 public data cohorts (jitc-2023-006941supp006)
+* Supplemental File 7- Online Supplemental Figure S3: Individual four-type multicancer correlations (jitc-2023-006941supp007)
+* Supplemental File 8- Online Supplemental Figure S4: Gene ontology (GO) dotplots of the significantly enriched GO biological processes, contrast setting of high versus low PDL1/CD8 infiltration (jitc-2023-006941supp008)
+* Supplemental File 9- Online Supplemental Figure S5: Objective response rate correlations with median logTMB, PD-L1 expression, TIS-GEP, CD8+, CD4+ T-cells, B cells infiltration, tumor purity across 26 TCGA tumor types (jitc-2023-006941supp009)
+* Supplemental File 10- Online Supplemental Figure S6: Univariable Cox proportional hazards analysis  - KM plots for TCR and BCR richness (jitc-2023-006941supp010)
+* Supplemental File 11- Online Supplemental Figure S7: Univariable Cox proportional hazards analysis  - KM plots for logTMB, PD-L1 expression, TIS-GEP (jitc-2023-006941supp011)
+* Supplemental File 12- Online Supplemental Figure S8: Univariable Cox proportional hazards analysis  - KM plots for CD8+, CD4+ T-cells, B cells infiltration, tumor purity(jitc-2023-006941supp012)
+* Supplemental File 13- Online Supplemental Figure S9: Predictive modeling workflow (jitc-2023-006941supp013)
+* Supplemental File 14- Online Supplemental Figure S10: ROC-AUC comparisons of uni and multivariate RFE models performance across schemes(jitc-2023-006941supp014)
 
 **Note** on Suppl. Figure S10: 
 Despite rigorous efforts to maintain consistency, including using the same R version, R package versions, and controlling for randomness in data sampling through bootstrapping (via set.seed()), the most recent execution of the code producing this figure resulted in slightly different p-values from the ROC-AUC comparisons. The variations, observed at the second and third decimal points, were extensively investigated through debugging, yet, without identifying a specific cause.
