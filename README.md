@@ -57,7 +57,7 @@ Block A scripts running all TCGA data download and processing needs to be run wi
 3. _A_03_get_vst_normalized.R_: vst normalization of TCGA count data
 4. _A_04_get_TCGA_msi_status_data.R_: due to archiving of GDC legacy data (see [here](https://gdc.cancer.gov/news-and-announcements/gdc-legacy-archive-retires)), this script is no longer working. Downloaded MSI data are provided in the TCGA input data folder.
 5. _A_05_get_TCGA_biospecimen_RNA.RMD_: gather and filter all TCGA biospecimen data
-6: _A_06_tcga_clinical_biomarker_metadata.RMD_: Gather table of clinical, biomarker metadata for TCGA samples
+6. _A_06_tcga_clinical_biomarker_metadata.RMD_: Gather table of clinical, biomarker metadata for TCGA samples
 
 These scripts can be executed individually, following the specified order, or directly from the  __A_TCGA_data_preparation.R__ script, encompassing the entire code collection for block A.
 
